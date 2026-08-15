@@ -15,6 +15,7 @@ from django.db import transaction
 from django.db.models import F
 from django_q.tasks import async_task
 
+from generation.api import _MAX_REFERENCE_AUDIO
 from generation.models import GenerationJob, Mode, ReferenceAsset, RenderDuration, RenderPreset
 from generation.resolution import compute_resolution
 from integrations import media_post, motion_context
@@ -47,6 +48,12 @@ _REFERENCE_TOKEN_PATTERNS = {
     ReferenceAsset.Kind.VIDEO: (re.compile(r"<Video (\d+)>"), "Video"),
     ReferenceAsset.Kind.AUDIO: (re.compile(r"<Audio (\d+)>"), "Audio"),
 }
+
+# How much of the predecessor's own rendered audio continues_audio pulls
+# in -- see Clip.continues_audio's own docstring and
+# _predecessor_audio_tail_bytes() below. Not user-configurable (yet):
+# picked as a plausible middle ground, not tuned against a real render.
+AUDIO_TAIL_SECONDS = 3.0
 
 
 class RenderConflict(Exception):
@@ -218,6 +225,108 @@ def _combined_references(clip: Clip) -> list[ProjectResource | ReferenceAsset]:
     return combined
 
 
+def _cited_ordinals(text: str, kind: str) -> set[int]:
+    """Which <Picture N>/<Video N>/<Audio N> ordinals of `kind` are
+    actually mentioned in `text` -- see _render_references_and_prompts()
+    and cited_project_resource_count() below, its two callers."""
+    pattern, _word = _REFERENCE_TOKEN_PATTERNS[kind]
+    return {int(n) for n in pattern.findall(text)}
+
+
+def cited_project_resource_count(clip: Clip, kind: str) -> int:
+    """How many of clip.project's own ProjectResources of `kind` are
+    actually cited by clip.prompt/improved_prompt -- what
+    _render_references_and_prompts() below will actually wire in for a
+    non-continuity render of `clip`. Exposed so director/api.py could, in
+    principle, size a per-kind limit check against a clip's real citation
+    count -- deliberately NOT used for that today (see
+    _render_references_and_prompts()'s docstring on why every existing
+    limit check keeps assuming full inclusion instead); kept as a public
+    entry point for whatever surfaces this count to the user (e.g. an
+    "N of M shared references actually used" hint) without duplicating
+    the citation scan.
+    """
+    total = clip.project.resources.filter(kind=kind).count()
+    if total == 0:
+        return 0
+    cited = _cited_ordinals(f"{clip.prompt}\n{clip.improved_prompt}", kind)
+    return sum(1 for ordinal in range(1, total + 1) if ordinal in cited)
+
+
+def _render_references_and_prompts(clip: Clip) -> tuple[list[ProjectResource | ReferenceAsset], str, str]:
+    """The references, and the prompt/improved_prompt text, a *non*-
+    continuity render of `clip` actually submits -- cite-gated, unlike
+    _combined_references() above (used instead whenever real chain
+    continuity is active, see _build_job_for_clip(): a chained submission
+    resends every earlier scene's own *stored* prompt verbatim as part of
+    the plan (see _resolve_chain_params()'s `shots`), so this clip's own
+    reference wiring has to agree with the same full-inclusion numbering
+    those already assume. Only a non-continuity render is free to trim
+    what it wires in without contradicting anything upstream).
+
+    A project resource is only wired into the render -- and only
+    occupies a slot in the renumbered <Kind N> tokens actually sent --
+    when clip.prompt or clip.improved_prompt cites its *authoring*-time
+    token (see ClipReferenceAsset.label/ProjectResource.token_label,
+    which always count every project resource regardless of what any one
+    clip cites -- that numbering is what the user writes against and
+    never changes here; this function only ever produces a render-time
+    copy, never written back to the Clip). Lets a project keep a large
+    shared reference pool without every r2v clip paying for -- or
+    hitting the per-kind cap on -- a resource it never mentions: an
+    uncited resource costs this clip nothing. This clip's own references
+    are always included regardless of citation; they were deliberately
+    attached to this one clip, so there's nothing to cite.
+
+    Per-kind limit checks (director/api.py's project_resources() POST /
+    clip_references() POST / promote_clip_reference()) deliberately keep
+    assuming full inclusion rather than a clip's real citation count --
+    the conservative check, and the right one: whether this gating even
+    applies to a given render depends on chain availability and
+    continues_previous, both of which can change after a reference was
+    added, so a clip has to stay valid under full inclusion too.
+    """
+    project = clip.project
+    combined: list[ProjectResource | ReferenceAsset] = []
+    remaps: dict[str, dict[int, int]] = {}
+    cite_text = f"{clip.prompt}\n{clip.improved_prompt}"
+
+    for kind in (ReferenceAsset.Kind.IMAGE, ReferenceAsset.Kind.AUDIO, ReferenceAsset.Kind.VIDEO):
+        project_items = list(project.resources.filter(kind=kind).order_by("order", "id"))
+        cited = _cited_ordinals(cite_text, kind)
+        kept = [(old, r) for old, r in enumerate(project_items, start=1) if old in cited]
+        remap = {old: new for new, (old, _r) in enumerate(kept, start=1)}
+        # Skipping an uncited resource can leave a gap in the middle of
+        # `kept` -- unlike _combined_references() above, a kept item's
+        # own .order can no longer be trusted to already match its
+        # position in the compacted list, so it's reassigned here rather
+        # than carried over from project-wide storage.
+        for new, (_old, r) in enumerate(kept, start=1):
+            r.order = new - 1
+            combined.append(r)
+
+        own_refs = list(clip.references.filter(kind=kind).order_by("order", "id"))
+        old_base, new_base = len(project_items), len(kept)
+        for offset, item in enumerate(own_refs):
+            remap[old_base + offset + 1] = new_base + offset + 1
+            item.order = new_base + offset
+            combined.append(item)
+        remaps[kind] = remap
+
+    def _remap_text(text: str) -> str:
+        for kind, remap in remaps.items():
+            pattern, word = _REFERENCE_TOKEN_PATTERNS[kind]
+
+            def _sub(match: re.Match, remap=remap, word=word) -> str:
+                new = remap.get(int(match.group(1)))
+                return f"<{word} {new}>" if new is not None else match.group(0)
+
+            text = pattern.sub(_sub, text)
+        return text
+
+    return combined, _remap_text(clip.prompt), _remap_text(clip.improved_prompt)
+
+
 def renumber_clip_reference_tokens(
     project: Project, kind: str, old_project_count: int, new_project_count: int, *, exclude_clip: Clip | None = None
 ) -> None:
@@ -364,6 +473,43 @@ def _chain_head(clip: Clip) -> Clip:
     return current
 
 
+def _predecessor_audio_tail_bytes(clip: Clip) -> bytes | None:
+    """The last AUDIO_TAIL_SECONDS of clip's immediate predecessor's own
+    rendered audio -- see Clip.continues_audio's own docstring. None if
+    there's no eligible predecessor render to pull it from (caller already
+    checked continues_previous/mode -- this only checks the predecessor
+    actually has a finished, playable render, same guard _build_job_for_clip's
+    own anchor-frame extraction uses).
+    """
+    predecessor = _predecessor(clip)
+    if predecessor is None or predecessor.needs_render or predecessor.current_job_id is None:
+        return None
+    pred_job = predecessor.current_job
+    if not pred_job.video_file:
+        return None
+    pred_job.video_file.open("rb")
+    try:
+        video_bytes = pred_job.video_file.read()
+    finally:
+        pred_job.video_file.close()
+    return media_post.extract_audio_tail(video_bytes, AUDIO_TAIL_SECONDS)
+
+
+def _audio_tail_instruction(token: int) -> str:
+    """The sentence appended to a render's prompt text pointing at the
+    continues_audio tail's own <Audio N> token -- unlike every other
+    reference, this one is never something the user attached or wrote a
+    citation for (it's added here, at render time, with no correspondingly
+    stable *authoring*-time number the way a ProjectResource/
+    ClipReferenceAsset has -- see _render_references_and_prompts()), so
+    nothing else in the written prompt would tell the model what it's for.
+    """
+    return (
+        f"<Audio {token}> is the tail end of the previous shot's own sound -- "
+        "continue its voice, tone, and ambience seamlessly from it."
+    )
+
+
 def _build_job_for_clip(clip: Clip) -> GenerationJob:
     """Creates a fresh GenerationJob for `clip`'s current content (mirrors
     generation/api.py's jobs() POST handler, minus the HTTP layer), links
@@ -380,9 +526,44 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
     continuation) Clip rendered always starts a brand new real-continuity
     run if the extension is available then, regardless of how any earlier
     part of the project rendered.
+
+    continues_audio, if also set, layers a short clipped tail of the
+    predecessor's own audio in as an ordinary reference-audio upload --
+    see Clip.continues_audio's own docstring for why this is a completely
+    separate mechanism from the video/motion continuity above.
     """
     chain_params = _resolve_chain_params(clip)
     anchor_frame: bytes | None = None
+
+    # A chained submission resends every earlier scene's own stored
+    # prompt verbatim (see _resolve_chain_params()'s `shots`), which
+    # assumes every clip in the run wires in every project resource --
+    # see _render_references_and_prompts()'s docstring for why cite-
+    # gating is only safe to apply outside real chain continuity.
+    if chain_params is not None:
+        references = _combined_references(clip)
+        render_prompt, render_improved_prompt = clip.prompt, clip.improved_prompt
+    else:
+        references, render_prompt, render_improved_prompt = _render_references_and_prompts(clip)
+
+    # continues_audio: an ordinary reference-audio upload, independent of
+    # chain_params either way -- apply_motion_context() never touches
+    # ref_audios (see that function's own docstring), so this composes
+    # cleanly whether or not real chain continuity is also active.
+    audio_tail_bytes: bytes | None = None
+    if clip.continues_audio and clip.continues_previous and clip.mode == Mode.REFERENCE_TO_VIDEO:
+        candidate = _predecessor_audio_tail_bytes(clip)
+        if candidate is not None:
+            audio_count = sum(1 for r in references if r.kind == ReferenceAsset.Kind.AUDIO)
+            if audio_count < _MAX_REFERENCE_AUDIO[Mode.REFERENCE_TO_VIDEO]:
+                # Explicit references (shared or this clip's own) were
+                # deliberately attached by the user -- the tail only takes
+                # whatever slot is left over rather than displacing one.
+                audio_tail_bytes = candidate
+                instruction = _audio_tail_instruction(audio_count + 1)
+                render_prompt = f"{render_prompt}\n\n{instruction}"
+                if render_improved_prompt.strip():
+                    render_improved_prompt = f"{render_improved_prompt}\n\n{instruction}"
 
     if clip.continues_previous:
         predecessor = _predecessor(clip)
@@ -416,8 +597,8 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
         mode=clip.mode,
         preset=clip.preset,
         duration=clip.duration,
-        raw_prompt=clip.prompt,
-        improved_prompt=clip.improved_prompt,
+        raw_prompt=render_prompt,
+        improved_prompt=render_improved_prompt,
         megapixels=clip.preset.megapixels,
         steps=clip.preset.steps,
         aspect_ratio=clip.project.aspect_ratio,
@@ -432,7 +613,6 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
     # current_job to some other, newer job.
     JobProjectTag.objects.create(job=job, project=clip.project)
 
-    references = _combined_references(clip)
     if anchor_frame is not None:
         # Leads as the new job's first (order=0) image reference -- i2v's
         # convention is order=0 -> first_frame; r2v's is order=0 -> the
@@ -445,6 +625,14 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
                 ref.order += 1
         anchor_ref = ReferenceAsset(job=job, kind=ReferenceAsset.Kind.IMAGE, order=0)
         anchor_ref.file.save("continuation_last_frame.png", ContentFile(anchor_frame), save=True)
+
+    if audio_tail_bytes is not None:
+        # Appended after every explicit audio reference (order computed
+        # above from `references`, unaffected by anything added since) --
+        # see the "explicit references outrank the tail" comment above.
+        audio_count = sum(1 for r in references if r.kind == ReferenceAsset.Kind.AUDIO)
+        tail_ref = ReferenceAsset(job=job, kind=ReferenceAsset.Kind.AUDIO, order=audio_count)
+        tail_ref.file.save("continuation_audio_tail.mp3", ContentFile(audio_tail_bytes), save=True)
 
     for ref in references:
         ref.file.open("rb")

@@ -171,6 +171,10 @@ export function ClipEditorPanel({
     await updateClip.mutateAsync({ projectId, clipId: clip.id, continuesPrevious: value });
   }
 
+  async function handleContinuesAudioToggle(value: boolean) {
+    await updateClip.mutateAsync({ projectId, clipId: clip.id, continuesAudio: value });
+  }
+
   async function handleDelete() {
     await deleteClip.mutateAsync({ projectId, clipId: clip.id });
     onClose();
@@ -293,7 +297,7 @@ export function ClipEditorPanel({
             disabled={!canContinue}
             onChange={(e) => void handleContinuesToggle(e.target.checked)}
           />
-          Continue from the previous clip (motion/audio continuity)
+          Continue from the previous clip (motion continuity)
           {!canContinue && (
             <span className="hint">
               {" "}
@@ -301,6 +305,17 @@ export function ClipEditorPanel({
             </span>
           )}
         </label>
+        {clip.continues_previous && clip.mode === "r2v" && (
+          <label className="clip-editor-continues-toggle">
+            <input
+              type="checkbox"
+              checked={clip.continues_audio}
+              onChange={(e) => void handleContinuesAudioToggle(e.target.checked)}
+            />
+            Continue audio from the previous clip
+            <span className="hint"> — experimental, feeds in a short tail of its sound as a reference</span>
+          </label>
+        )}
 
         {clip.mode === "i2v" && (
           <fieldset>

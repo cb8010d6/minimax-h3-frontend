@@ -30,26 +30,29 @@ every scene being its own isolated shot.
 ## 2. Continuity between scenes
 
 Two adjacent scenes can either be a hard cut (a new, independent shot)
-or a direct continuation (the same shot keeps rolling — motion and audio
-flow seamlessly across the boundary, no cut). This app splices real
-motion/audio continuity in automatically at render time — you never
-write anything about the *mechanism* in the prompt text itself — but
-when `"continues_previous": true`, the prompt's own *content* still has
-to read as a seamless continuation: keep the same camera angle/framing,
-setting, and characters the previous scene established, and describe
-only how the action continues or develops from where it left off. Don't
-jump to a different angle, location, or unrelated action on a scene
-you've flagged as continuing — that's a hard cut wearing a
-`continues_previous` label, and the render won't actually look
-continuous just because the flag is set.
+or a direct continuation (the same shot keeps rolling, no cut). This app
+splices real motion continuity in automatically at render time — you
+never write anything about the *mechanism* in the prompt text itself —
+but when `"continues_previous": true`, the prompt's own *content* still
+has to read as a seamless continuation: keep the same camera
+angle/framing, setting, and characters the previous scene established,
+and describe only how the action continues or develops from where it
+left off. Don't jump to a different angle, location, or unrelated
+action on a scene you've flagged as continuing — that's a hard cut
+wearing a `continues_previous` label, and the render won't actually
+look continuous just because the flag is set.
 
-The render engine carries a short tail of each scene's own audio
-forward as the *next* scene's starting audio context, so anything you
-place right at the very end of a scene's dialogue/soundscape is most
-exposed to being cut off or garbled at the handover. Put important,
-plot-critical lines earlier or in the middle of a scene rather than as
-its last words, especially on a scene that will itself be continued by
-another.
+Audio does *not* carry across a `continues_previous` boundary by
+default — each scene's sound (voice, ambience, score) is generated
+fresh from its own prompt, not inherited from the one before it. Write
+each continuing scene's soundscape/dialogue as if starting from
+silence: repeat the same voice/tone description you used in the
+previous scene rather than assuming it's remembered, and don't write a
+line of dialogue that only makes sense as a continuation of audio that
+technically no longer exists on the render side (e.g. a sentence
+picking up mid-word). A human can turn on an experimental per-clip
+"continue audio" option after the fact in the clip editor -- not
+something to set from here.
 
 For each scene, set:
 

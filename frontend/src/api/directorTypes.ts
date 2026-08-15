@@ -32,6 +32,12 @@ export interface Clip {
   // backend director/models.py's Clip docstring): reordering the board
   // changes what a continuation box actually continues from.
   continues_previous: boolean;
+  // Experimental, independent of continues_previous above -- feeds a
+  // short tail of the predecessor's own rendered audio in as an ordinary
+  // reference-audio upload (see backend Clip.continues_audio's own
+  // docstring). Only meaningful alongside continues_previous and
+  // mode="r2v".
+  continues_audio: boolean;
   mode: Mode;
   prompt: string;
   improved_prompt: string;

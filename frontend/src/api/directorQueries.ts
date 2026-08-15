@@ -239,6 +239,8 @@ export interface UpdateClipInput {
   prompt?: string;
   improvedPrompt?: string;
   continuesPrevious?: boolean;
+  // Experimental -- see Clip.continues_audio's own docstring.
+  continuesAudio?: boolean;
   durationId?: number;
 }
 
@@ -250,6 +252,7 @@ export function useUpdateClip() {
       if (input.prompt !== undefined) body.prompt = input.prompt;
       if (input.improvedPrompt !== undefined) body.improved_prompt = input.improvedPrompt;
       if (input.continuesPrevious !== undefined) body.continues_previous = input.continuesPrevious;
+      if (input.continuesAudio !== undefined) body.continues_audio = input.continuesAudio;
       if (input.durationId !== undefined) body.duration_id = input.durationId;
       return apiFetch<Clip>(`/director/clips/${input.clipId}/`, {
         method: "PATCH",

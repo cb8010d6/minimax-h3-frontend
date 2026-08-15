@@ -74,6 +74,24 @@ def extract_last_frame(video_bytes: bytes) -> bytes:
     return _run_ffmpeg(["-vf", "reverse", "-frames:v", "1", "-update", "1"], video_bytes, ".png")
 
 
+def extract_audio_tail(video_bytes: bytes, seconds: float) -> bytes:
+    """Extracts the final `seconds` of the audio track as an MP3 -- backs
+    Director Mode's continues_audio (see director/services.py's
+    _predecessor_audio_tail_bytes()): a short clip of the predecessor's own
+    rendered sound, fed into the next Clip's render as an ordinary
+    reference-audio upload so the model has something concrete to continue
+    the voice/tone/ambience from.
+
+    `-sseof -{seconds}` seeks from end-of-file rather than decoding forward
+    from the start (unlike extract_last_frame()'s `reverse` filter) --
+    audio-only decoding is cheap enough on these short clips that an exact
+    frame-accurate seek isn't worth the extra decode pass, and ffmpeg
+    clamps a seek past the start to the beginning of the file on its own,
+    so a `seconds` longer than the source just returns the whole track.
+    """
+    return _run_ffmpeg(["-sseof", f"-{seconds}", "-vn", "-acodec", "libmp3lame", "-q:a", "2"], video_bytes, ".mp3")
+
+
 def extract_thumbnail(video_bytes: bytes, max_width: int = 320) -> bytes:
     """Extracts frame 0, downscaled to max_width wide, as a PNG -- backs
     GenerationJob.thumbnail_file (see generation/tasks.py's

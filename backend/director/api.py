@@ -59,6 +59,11 @@ class ClipSerializer(serializers.Serializer):
     project = serializers.IntegerField(source="project_id")
     order = serializers.IntegerField()
     continues_previous = serializers.BooleanField()
+    continues_audio = serializers.BooleanField(
+        help_text="Experimental -- feeds a short tail of the predecessor's own audio in as an "
+        "ordinary reference-audio upload. Only meaningful alongside continues_previous and "
+        "mode=r2v; see Clip.continues_audio's own docstring."
+    )
     mode = serializers.ChoiceField(choices=Mode.choices)
     prompt = serializers.CharField()
     improved_prompt = serializers.CharField()
@@ -191,6 +196,7 @@ def _serialize_clip(clip: Clip) -> dict:
         "project_id": clip.project_id,
         "order": clip.order,
         "continues_previous": clip.continues_previous,
+        "continues_audio": clip.continues_audio,
         "mode": clip.mode,
         "prompt": clip.prompt,
         "improved_prompt": clip.improved_prompt,
@@ -694,7 +700,7 @@ def clip_detail(request, clip_id: int):
         return Response(status=204)
 
     if request.method == "PATCH":
-        editable_fields = {"prompt", "improved_prompt", "continues_previous"}
+        editable_fields = {"prompt", "improved_prompt", "continues_previous", "continues_audio"}
         changed = False
         resolution_may_change = False
         for field in editable_fields:
@@ -708,8 +714,24 @@ def clip_detail(request, clip_id: int):
                             status=400,
                         )
                     resolution_may_change = True
+                elif field == "continues_audio":
+                    value = str(value).lower() in ("1", "true", "yes", "on")
                 setattr(clip, field, value)
                 changed = True
+
+        if clip.continues_audio and not (clip.continues_previous and clip.mode == Mode.REFERENCE_TO_VIDEO):
+            if "continues_audio" in request.data:
+                # Explicitly asked for in a state that can't support it --
+                # tell the user rather than silently ignoring it.
+                return Response(
+                    {"error": "continues_audio requires continues_previous and mode=r2v."},
+                    status=400,
+                )
+            # Made stale as a side effect of another field changing in
+            # this same request (e.g. continues_previous just turned off)
+            # -- drop it rather than blocking an otherwise-valid PATCH.
+            clip.continues_audio = False
+            changed = True
 
         if "duration_id" in request.data:
             if clip.continues_previous:
