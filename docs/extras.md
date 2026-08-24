@@ -1,28 +1,29 @@
 # ComfyUI extras
 
-Optional third-party ComfyUI custom-node integrations for the MiniMax H3
-workflows this project drives. These aren't part of ComfyUI's official
-day-0 MiniMax H3 support (see the [Required ComfyUI
-models](../README.md#required-comfyui-models) section of the README) — they're
-independent community projects that add extra nodes on top of it.
+Optional integrations beyond ComfyUI's official day-0 MiniMax H3 support
+(see the [Required ComfyUI models](../README.md#required-comfyui-models)
+section of the README) for the workflows this project drives. Most of these
+are independent community `custom_nodes` projects; **Turbo** below is the
+exception — as of the ComfyUI version this app currently targets, its two
+nodes ship natively, so only its LoRA *weight files* (not any third-party
+code) need adding.
 
-**These are unaudited third-party Python packages that ComfyUI loads and
-executes.** Review a project's source (not just its README) before installing
-it into your ComfyUI instance, the same way you would for any other
-`custom_nodes` package. This project verified that each repo below is real
-and active (cross-checked against an independent
+**Non-native extras below are unaudited third-party Python packages that
+ComfyUI loads and executes.** Review a project's source (not just its
+README) before installing it into your ComfyUI instance, the same way you
+would for any other `custom_nodes` package. This project verified that each
+repo below is real and active (cross-checked against an independent
 [`awesome-minimax-H3`](https://github.com/wildminder/awesome-minimax-H3) list
 and, for Spectrum, an independent
 [comfyui-wiki.com news post](https://comfyui-wiki.com/en/news/2026-08-03-comfyui-spectrum-minimax-h3))
 but has not audited any of their code.
 
-**Spectrum** and **Contex Loop** (the latter backing Director Mode's clip
-continuation, not a `COMFYUI_EXTRAS` toggle — see
+**Spectrum**, **Turbo**, and **Contex Loop** (the last backing Director
+Mode's clip continuation, not a `COMFYUI_EXTRAS` toggle — see
 [below](#contex-loop--integrated-director-mode)) are actually wired into
-this app; Turbo and the older, separate Motion Context project are
-documented for reference but not integrated — see [Why only one
-COMFYUI_EXTRAS extra is wired up right
-now](#why-only-one-comfyui_extras-extra-is-wired-up-right-now).
+this app; the older, separate Motion Context project is documented for
+reference but not integrated — see [Why this stopped short of a full extras
+registry](#why-this-stopped-short-of-a-full-extras-registry).
 
 ## Configuration
 
@@ -36,14 +37,15 @@ One env var, `COMFYUI_EXTRAS` (see `.env.example`), comma-separated
 | `slug=1` | Optional — a toggle is shown, checked by default. |
 | `slug=2` | Forced — always applied to every job, no toggle shown, not overridable per job. |
 
-Only `spectrum` does anything right now, e.g. `COMFYUI_EXTRAS=spectrum=1`.
-The level is enforced server-side (`generation/api.py::_resolve_use_spectrum`)
-regardless of what a client sends.
+`spectrum` and `turbo` both do something, e.g.
+`COMFYUI_EXTRAS=spectrum=1,turbo`. The level is enforced server-side
+(`generation/api.py::_resolve_use_spectrum`/`_resolve_use_turbo`) regardless
+of what a client sends.
 
 ### Checking what's actually installed
 
-There's no live status page (see [Why only one extra is wired up right
-now](#why-only-one-extra-is-wired-up-right-now)) — check from the CLI
+There's no live status page (see [Why this stopped short of a full extras
+registry](#why-this-stopped-short-of-a-full-extras-registry)) — check from the CLI
 instead, after setting `COMFYUI_EXTRAS` and before relying on it for a real
 render:
 
@@ -336,69 +338,105 @@ and degrades automatically rather than failing or disabling continuation:
   shared project prompt/resources) works identically either way; only the
   quality of a `continues_previous` join degrades.
 
-## Turbo — documented, not integrated
+## Turbo — integrated
 
+A turbo LoRA + a per-stream (video/audio) sigma-shift, rendering MiniMax H3
+in a handful of sampling steps instead of ~20. This app originally looked at
 **[Larryvrh/ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo)**
-— a turbo LoRA + custom sampler that renders MiniMax H3 in **4 sampling
-steps** instead of ~20.
+(a third-party turbo LoRA + a custom sampler node, kept below for context)
+but the ComfyUI instance this app now targets ships the equivalent
+functionality **natively** — a stock `LoraLoaderModelOnly` node plus one new
+built-in node (`MiniMaxH3SigmaShift`) reproduce the same effect without any
+extra `custom_nodes` install, confirmed directly against a live instance's
+`GET /object_info` (Aug 2026). This app wires in the native pair, not the
+third-party extension.
 
 ### What it does
 
-Two nodes, meant to drop into the official t2v/i2v workflow:
-
 | Node | What it does |
 |---|---|
-| **MiniMax-H3 Turbo LoRA** | `MODEL → MODEL`, applies the [turbo LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora), inserted between the model loader and sampler. |
-| **MiniMax-H3 Turbo Sampler (4-step)** | `→ SAMPLER`, replaces whatever feeds `SamplerCustomAdvanced`'s `sampler` input. |
+| `LoraLoaderModelOnly` (stock) | `MODEL → MODEL`, applies a turbo-distilled LoRA -- one of two checkpoints available on the configured instance's `lora_name` combo, `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` for t2v/i2v, `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` for r2v (each trained against that mode's own base checkpoint). |
+| `MiniMaxH3SigmaShift` | `MODEL → MODEL`, sets separate video/audio flow-shift values (`shift_video=12.0`, `shift_audio=3.0` by default) so the two streams denoise on their own schedule instead of one shared one, which is what keeps audio from distorting at a low step count. |
 
-MiniMax H3 denoises video and audio on two different flow schedules (video
-shift 12, audio shift 3); ComfyUI's stock samplers step both on one
-schedule, which over-steps (distorts) the audio at only 4 steps. The custom
-sampler steps each stream on its own schedule instead, so audio stays clean.
+Same underlying problem the third-party extension's custom sampler solved
+(see below) -- MiniMax H3 denoises video and audio on two different flow
+schedules, and a single shared schedule over-steps (distorts) the audio at
+only 4-8 steps -- just solved natively now instead of via a bespoke sampler
+node.
 
 ### Tradeoffs / known issues
 
-- **Preview-quality LoRA.** The current checkpoint (`ckpt850`) is described
-  by its own authors as the final checkpoint of its training round — sharp,
-  but with known artifacts (plastic-looking skin, over-sharp grain);
-  training is paused pending a fix.
-- **`low_vram` tradeoff**: off (default) applies the LoRA at runtime —
-  sharpest, more peak VRAM; on merges it into the weights — lowest peak VRAM
-  but softer results on quantized (`int8`/`fp8`/pruned) bases, since the
-  small LoRA update partly rounds away when folded into quantized weights.
-- LoRA `strength` is a sharpness/artifact dial: raise it (~1.05–1.2) if
-  results look blurry/ghosted, lower it (~0.8–0.95) if over-sharp/grainy.
-- Works with any MiniMax H3 base (full or pruned/curve-quantized) — detects
-  a pruned base automatically and re-injects time-conditioning for it.
-- Any step count ≥ 4 is valid (more helps a little); the whole point of the
-  extension is using exactly 4, so combining it with a preset that doesn't
-  also drop `steps` to 4 loses most of the benefit.
+- Each turbo LoRA is trained for a specific step count (8 for t2v/i2v, 4 for
+  r2v, per `settings.TURBO_STEPS_T2V_I2V`/`TURBO_STEPS_R2V`) -- running at a
+  different step count loses most of the benefit or leaves quality on the
+  table. This app overrides the job's steps entirely rather than treating it
+  as a normal preset dial (see "How this app wires it in" below).
+- Same expected quality tradeoff as any step-distilled LoRA: faster, but
+  typically softer/less consistent than a full ~20-step render, especially
+  on fast motion or fine detail. Not independently benchmarked by this
+  project against the specific checkpoints above.
+- Combining with Spectrum (both toggles on for the same job) is untested --
+  see the ordering note in "How this app wires it in" for what graph shape
+  results; nothing in either extension's own docs flags an incompatibility.
 
 ### Install (in ComfyUI)
 
-Via ComfyUI-Manager (search "MiniMax-H3 Turbo"), or manually:
+Nothing extra to install if your ComfyUI version already has native MiniMax
+H3 Turbo support (confirmed by `check_extras` -- see below) -- just place
+the two `.safetensors` files above under `ComfyUI/models/loras/`.
 
-```sh
-cd ComfyUI/custom_nodes
-git clone https://github.com/larryvrh/ComfyUI-MiniMax-H3-Turbo
-```
+### How this app wires it in
 
-Then download the `.safetensors` LoRA from
-[larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)
-into `ComfyUI/models/loras/`, and restart.
+- `COMFYUI_EXTRAS=turbo[=N]` (see [Configuration](#configuration)).
+- Frontend: a checkbox (or a static "always on" note at level 2) on the
+  Generate screen, driven by `GET /api/config/`'s `turbo_level` plus
+  `turbo_steps_t2v_i2v`/`turbo_steps_r2v` for the step-count caption
+  (`frontend/src/features/generate/GenerateScreen.tsx`).
+- Backend: `GenerationJob.use_turbo` is resolved at job-creation time
+  (`generation/api.py::_resolve_use_turbo`), which also overrides the job's
+  `steps` snapshot to `settings.TURBO_STEPS_T2V_I2V`/`TURBO_STEPS_R2V`
+  instead of the chosen preset's own `steps` -- turbo isn't a quality dial
+  the way a normal preset is, it only makes sense at the step count its LoRA
+  was trained for. `backend/integrations/turbo.py::apply_turbo()` then
+  splices the LoRA + sigma-shift nodes into the API-format workflow at
+  render time (`generation/tasks.py::build_api_workflow()`), same
+  find-the-loader-and-rewire mechanic as `integrations/spectrum.py`.
+- **Splice ordering with Spectrum**: `build_api_workflow()` calls
+  `apply_spectrum()` before `apply_turbo()` -- backwards from how that reads,
+  but each function rewires *everything currently downstream* of the loader
+  to sit after its own new node, so the one called **last** ends up
+  **closest** to the loader in the resulting graph. Spectrum-then-turbo
+  produces `loader → turbo LoRA → turbo SigmaShift → Spectrum →
+  guider/sampler`, matching Spectrum's own recommended shape (`model loader
+  → [LoRA, if any] → Spectrum → guider/sampler`); the reverse call order
+  still produces a valid, non-cyclic graph, just with Spectrum sitting
+  directly on the loader instead.
+- Not accounted for: same as Spectrum, `GenerationJob.estimated_seconds`
+  does not shrink when turbo is on -- the real render is faster than the
+  quoted estimate, and the frontend hint says so rather than faking an
+  adjustment.
+- `manage.py check_extras` (see [Configuration](#configuration)) checks both
+  node classes *and*, turbo-specifically, that both LoRA `.safetensors`
+  files actually show up in `LoraLoaderModelOnly`'s live `lora_name`
+  options -- the node classes themselves are stock/native and will report
+  "installed" regardless of whether the weight files were ever downloaded,
+  so that's the more useful check for this particular extra.
 
-### Why not yet integrated
+### Superseded: Larryvrh/ComfyUI-MiniMax-H3-Turbo
 
-The Spectrum toggle above is the first cut of this app's "extras" support,
-deliberately kept minimal (a plain per-job boolean, no general plugin
-registry) to see how that shape holds up in practice before adding a second
-extra. Turbo is a reasonable next candidate — it's the same kind of
-per-job workflow splice Spectrum already is (see
-`backend/integrations/spectrum.py` for the pattern: find a node by
-`class_type`, rewire references, insert) — but also needs a `steps=4`
-override baked into wherever it hooks in, since it isn't useful without
-also dropping the sampler step count, which the current
-preset/duration model doesn't have a clean per-job override for yet.
+**[Larryvrh/ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo)**
+— the third-party project this app originally evaluated before the native
+nodes above existed on its configured instance. Two nodes, meant to drop
+into the official t2v/i2v workflow: **MiniMax-H3 Turbo LoRA** (`MODEL →
+MODEL`, applies the [turbo LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora))
+and **MiniMax-H3 Turbo Sampler (4-step)** (`→ SAMPLER`, a custom
+per-stream sampler replacing whatever fed `SamplerCustomAdvanced`'s
+`sampler` input). Its own README describes the current LoRA checkpoint
+(`ckpt850`) as preview-quality (plastic-looking skin, over-sharp grain;
+training paused pending a fix) and documents a `low_vram` runtime-vs-merged
+tradeoff and a `strength` sharpness dial (~0.8–1.2). Kept here for reference
+only -- this app does not install or wire this extension in; see "How this
+app wires it in" above for what it uses instead.
 
 ## Motion Context — documented, not integrated
 
@@ -474,16 +512,27 @@ Loop ever turns out to have a dealbreaker Motion Context doesn't, but
 there's no reason to maintain two integrations of the same underlying
 capability today.
 
-## Why only one COMFYUI_EXTRAS extra is wired up right now
+## Why this stopped short of a full extras registry
 
 This project went through a few design passes on how much "extras"
 infrastructure to build up front — preset-level configuration (rejected: it
 would duplicate a preset row per quality-tier × extras combination),
 then a fuller plugin registry with admin-tunable per-extra time-estimate
 profiles. The decision was to hold off on generalizing until there's a
-second real extra to generalize *from* — so this first cut is a single
+second real extra to generalize *from* — Spectrum shipped first as a single
 purpose-built boolean (`GenerationJob.use_spectrum`) and a single splice
-function (`integrations/spectrum.py::apply_spectrum`), not a registry. If
-Turbo (or another extra) gets wired in next, that's the point to factor out
-the shared shape (node-splice helpers, a real registry, per-extra admin
-tuning, time-estimate adjustment) rather than guessing at it now.
+function (`integrations/spectrum.py::apply_spectrum`), deliberately not a
+registry.
+
+Turbo (above) is that second extra, and it *did* reuse the same shape
+almost exactly -- `GenerationJob.use_turbo`, `_resolve_use_turbo` mirroring
+`_resolve_use_spectrum`, `integrations/turbo.py::apply_turbo` using the same
+find-the-loader-and-rewire mechanic as `apply_spectrum` -- which is a decent
+signal the shape holds up. The one thing it needed that Spectrum didn't is a
+per-job steps override (turbo's LoRA is only useful at the step count it was
+trained for, unlike Spectrum which layers on top of whatever steps the
+preset already specifies) -- handled ad hoc in `generation/api.py`'s
+job-creation view rather than a generalized "extra can override job fields"
+mechanism. A third extra needing its own novel hook (not just "splice a
+node in") would be the point to factor out a real registry rather than
+keep extending this by hand.

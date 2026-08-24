@@ -107,6 +107,15 @@ export interface AppConfig {
   // default on. 2: forced on for every job, no toggle to show. See
   // extras.md#spectrum.
   spectrum_level: 0 | 1 | 2 | null;
+  // Same meaning as spectrum_level, for the Turbo LoRA speedup -- see
+  // extras.md#turbo.
+  turbo_level: 0 | 1 | 2 | null;
+  // Sampler steps a turbo job actually renders at (overrides the chosen
+  // preset's own steps) -- t2v/i2v share one turbo LoRA, r2v/r2i/r2a
+  // another, each trained at a different step count. See
+  // REFERENCE_FLOW_MODES below for which is which.
+  turbo_steps_t2v_i2v: number;
+  turbo_steps_r2v: number;
 }
 
 export interface CurrentUser {
@@ -214,6 +223,10 @@ export interface GenerationJob {
   // Whether this job used the Spectrum accelerator -- see extras.md#spectrum.
   // estimated_seconds above does NOT account for it.
   use_spectrum: boolean;
+  // Whether this job used the Turbo LoRA speedup -- see extras.md#turbo.
+  // Also means this job's steps were overridden from its preset's own
+  // value. estimated_seconds above does NOT account for it.
+  use_turbo: boolean;
   video_url: string | null;
   // Small poster image for video-content-type jobs -- null for image/audio
   // jobs (video_url already works as a thumbnail for those) and for jobs

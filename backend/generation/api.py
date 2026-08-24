@@ -31,7 +31,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from integrations import comfyui, llm, motion_context
+from integrations import comfyui, llm, motion_context, turbo
 
 from .models import (
     CONTENT_TYPE_BY_MODE,
@@ -40,6 +40,7 @@ from .models import (
     Mode,
     PromptChatMessage,
     PromptChatSession,
+    REFERENCE_FLOW_MODES,
     ReferenceAsset,
     RenderDuration,
     RenderPreset,
@@ -90,6 +91,20 @@ class ConfigResponseSerializer(serializers.Serializer):
         help_text="settings.SPECTRUM_LEVEL: null (not offered), 0 (optional, default off), "
         "1 (optional, default on), or 2 (forced -- every job uses it, no toggle to show). "
         "See extras.md#spectrum.",
+    )
+    turbo_level = serializers.IntegerField(
+        allow_null=True,
+        help_text="settings.TURBO_LEVEL: null (not offered), 0 (optional, default off), "
+        "1 (optional, default on), or 2 (forced -- every job uses it, no toggle to show). "
+        "See extras.md#turbo.",
+    )
+    turbo_steps_t2v_i2v = serializers.IntegerField(
+        help_text="settings.TURBO_STEPS_T2V_I2V -- the sampler step count a turbo t2v/i2v job "
+        "actually renders at (overrides the chosen preset's steps), so the frontend can show "
+        "it next to the toggle."
+    )
+    turbo_steps_r2v = serializers.IntegerField(
+        help_text="settings.TURBO_STEPS_R2V -- same as turbo_steps_t2v_i2v, for r2v/r2i/r2a jobs."
     )
     director_full_continuity_available = serializers.BooleanField(
         help_text="Whether the Contex-Loop extension (see extras.md#contex-loop) is actually "
@@ -276,6 +291,12 @@ class CreateJobRequestSerializer(serializers.Serializer):
         "rows linked to this job (see generation/models.py) only now, at job-creation time. Chat "
         "itself (POST /api/prompt/chat/) never writes to the DB.",
     )
+    use_turbo = serializers.BooleanField(
+        required=False,
+        help_text="Only meaningful when GET /api/config/'s turbo_level is 0 or 1 (an optional "
+        "toggle) -- see extras.md#turbo. When set, overrides this job's sampler steps to "
+        "turbo_steps_t2v_i2v/turbo_steps_r2v regardless of the chosen preset's own steps.",
+    )
 
 
 class GenerationJobSerializer(serializers.Serializer):
@@ -318,6 +339,11 @@ class GenerationJobSerializer(serializers.Serializer):
     use_spectrum = serializers.BooleanField(
         help_text="Whether this job used the Spectrum accelerator -- see extras.md#spectrum. "
         "estimated_seconds above does NOT account for it."
+    )
+    use_turbo = serializers.BooleanField(
+        help_text="Whether this job used the Turbo LoRA speedup -- see extras.md#turbo. When "
+        "true, this job's actual sampler step count was overridden from the chosen preset's "
+        "own steps. estimated_seconds above does NOT account for the speedup."
     )
     video_url = serializers.CharField(allow_null=True)
     thumbnail_url = serializers.CharField(
@@ -404,6 +430,9 @@ def config(request):
             "aspect_ratios": [{"value": value, "label": label} for value, label in ASPECT_RATIOS],
             "default_aspect_ratio": DEFAULT_ASPECT_RATIO,
             "spectrum_level": settings.SPECTRUM_LEVEL,
+            "turbo_level": settings.TURBO_LEVEL,
+            "turbo_steps_t2v_i2v": settings.TURBO_STEPS_T2V_I2V,
+            "turbo_steps_r2v": settings.TURBO_STEPS_R2V,
             "director_full_continuity_available": motion_context.is_available(),
         }
     )
@@ -435,6 +464,20 @@ def _resolve_use_spectrum(requested: bool | None) -> bool:
     true/false rather than only including it when checked.
     """
     level = settings.SPECTRUM_LEVEL
+    if level is None:
+        return False
+    if level == 2:
+        return True
+    if requested is None:
+        return level == 1
+    return requested
+
+
+def _resolve_use_turbo(requested: bool | None) -> bool:
+    """Resolves GenerationJob.use_turbo from settings.TURBO_LEVEL plus what
+    the client asked for -- same shape/reasoning as _resolve_use_spectrum
+    above, see its docstring (extras.md#turbo for what each level means)."""
+    level = settings.TURBO_LEVEL
     if level is None:
         return False
     if level == 2:
@@ -675,6 +718,7 @@ def _serialize_job(
         "duration_seconds": job.duration_seconds,
         "estimated_seconds": job.estimated_seconds,
         "use_spectrum": job.use_spectrum,
+        "use_turbo": job.use_turbo,
         "video_url": job.video_file.url if job.video_file else None,
         "thumbnail_url": job.thumbnail_file.url if job.thumbnail_file else None,
         "created_at": job.created_at,
@@ -822,6 +866,10 @@ def jobs(request):
     )
     use_spectrum = _resolve_use_spectrum(use_spectrum_requested)
 
+    use_turbo_raw = request.data.get("use_turbo")
+    use_turbo_requested = None if use_turbo_raw is None else _parse_bool(use_turbo_raw)
+    use_turbo = _resolve_use_turbo(use_turbo_requested)
+
     reference_images = request.FILES.getlist("reference_images")
     max_images = _MAX_REFERENCE_IMAGES[mode]
     if len(reference_images) > max_images:
@@ -868,6 +916,14 @@ def jobs(request):
 
     width, height = compute_resolution(preset.megapixels, aspect_ratio)
 
+    # Turbo is only useful at (or near) the step count its LoRA was trained
+    # for, so it overrides the preset's own steps entirely rather than
+    # layering on top of it -- see settings.TURBO_STEPS_T2V_I2V/
+    # TURBO_STEPS_R2V, integrations/turbo.py.
+    steps = (
+        turbo.default_steps(is_reference_flow=mode in REFERENCE_FLOW_MODES) if use_turbo else preset.steps
+    )
+
     with transaction.atomic():
         job = GenerationJob.objects.create(
             user=request.user,
@@ -877,13 +933,14 @@ def jobs(request):
             raw_prompt=raw_prompt,
             improved_prompt=improved_prompt,
             megapixels=preset.megapixels,
-            steps=preset.steps,
+            steps=steps,
             aspect_ratio=aspect_ratio,
             width=width,
             height=height,
             duration_seconds=duration.duration_seconds,
             estimated_seconds=duration.estimated_render_seconds,
             use_spectrum=use_spectrum,
+            use_turbo=use_turbo,
         )
         for order, file in enumerate(reference_images):
             ReferenceAsset.objects.create(

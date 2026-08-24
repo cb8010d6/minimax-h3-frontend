@@ -23,6 +23,7 @@ import {
 } from "../../api/types";
 import { DropZone } from "../shared/DropZone";
 import { fetchAsFile, useObjectUrl, useObjectUrls } from "../shared/fileHelpers";
+import { InfoTooltip } from "../shared/InfoTooltip";
 import { ChatModal } from "./ChatModal";
 
 const CONTENT_TYPES: ContentType[] = ["video", "image", "audio"];
@@ -125,6 +126,8 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
   // effect near default_aspect_ratio's) -- not reset on submit, it's a
   // sticky preference like presetId/aspectRatio, not one-off content.
   const [useSpectrum, setUseSpectrum] = useState<boolean | null>(null);
+  // Same shape as useSpectrum above, for turbo_level (see extras.md#turbo).
+  const [useTurbo, setUseTurbo] = useState<boolean | null>(null);
 
   const [rawPrompt, setRawPrompt] = useState("");
   const [improvedPrompt, setImprovedPrompt] = useState("");
@@ -318,6 +321,12 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
     setUseSpectrum(config.data.spectrum_level === 1);
   }, [config.data, useSpectrum]);
 
+  // Default the Turbo toggle once config loads (see extras.md#turbo).
+  useEffect(() => {
+    if (useTurbo != null || config.data?.turbo_level == null) return;
+    setUseTurbo(config.data.turbo_level === 1);
+  }, [config.data, useTurbo]);
+
   // i2v's first frame gets its own aspect-ratio option, auto-selected, so
   // the render actually matches what's being animated instead of forcing it
   // into the nearest fixed preset -- see computeImageAspectRatio.
@@ -458,6 +467,12 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
           : config.data.spectrum_level === 2
             ? true
             : (useSpectrum ?? false),
+      useTurbo:
+        config.data?.turbo_level == null
+          ? undefined
+          : config.data.turbo_level === 2
+            ? true
+            : (useTurbo ?? false),
     });
     setRawPrompt("");
     setImprovedPrompt("");
@@ -593,6 +608,30 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
             )}{" "}
             Faster rendering via approximate step-skipping; may shift fast motion or fine detail
             slightly. The time estimate above doesn't account for the speedup.
+          </p>
+        )}
+
+        {config.data?.turbo_level != null && (
+          <p className="hint turbo-hint">
+            {config.data.turbo_level === 2 ? (
+              <span>🚀 Turbo mode is always on for this deployment.</span>
+            ) : (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={useTurbo ?? config.data.turbo_level === 1}
+                  onChange={(e) => setUseTurbo(e.target.checked)}
+                />{" "}
+                🚀 Turbo mode (experimental)
+              </label>
+            )}
+            <InfoTooltip
+              text={`Renders at just ${
+                REFERENCE_FLOW_MODES.includes(mode)
+                  ? config.data.turbo_steps_r2v
+                  : config.data.turbo_steps_t2v_i2v
+              } sampler steps via a distilled LoRA -- much faster, but softer/less consistent than a full render. Overrides the quality preset's own steps; the time estimate above doesn't account for the speedup.`}
+            />
           </p>
         )}
 

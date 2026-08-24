@@ -173,8 +173,10 @@ See [`resources/COMFYUI_API_GUIDE.md`](resources/COMFYUI_API_GUIDE.md) for how t
 |---|---|---|
 | `COMFYUI_BASE_URL` | `http://host.docker.internal:8000` | Base URL of the ComfyUI instance to submit jobs to. `host.docker.internal` reaches the Docker *host* machine (e.g. ComfyUI Desktop running alongside this stack); point it at any reachable host:port instead if ComfyUI runs elsewhere (as it does in this project's own deployment — a separate GPU machine on the LAN). |
 | `COMFYUI_OUTPUT_ROOT` | *(empty)* | Absolute filesystem path to ComfyUI's `output/` folder, if reachable from this machine — used to delete a generated video from ComfyUI's disk right after downloading it, so it doesn't linger there. Leave blank to skip that cleanup step (ComfyUI just keeps every output forever on its own disk). |
-| `COMFYUI_EXTRAS` | *(empty)* | Optional third-party ComfyUI custom-node integrations — see [`docs/extras.md`](docs/extras.md). Comma-separated `slug` or `slug=N` tokens (`N` in 0/1/2 — optional-off, optional-on-by-default, forced). Only `spectrum` does anything right now, e.g. `COMFYUI_EXTRAS=spectrum=1`. |
+| `COMFYUI_EXTRAS` | *(empty)* | Optional ComfyUI extras (mostly third-party custom nodes, one native) — see [`docs/extras.md`](docs/extras.md). Comma-separated `slug` or `slug=N` tokens (`N` in 0/1/2 — optional-off, optional-on-by-default, forced). `spectrum` and `turbo` both do something, e.g. `COMFYUI_EXTRAS=spectrum=1,turbo`. |
 | `COMFYUI_REQUEST_TIMEOUT` | `15` | Read timeout (seconds) for ComfyUI's short-lived JSON endpoints (`/history`, `/queue`, `/object_info`, `/interrupt`, etc.) — *not* the upload/download calls, which already scale their own timeout with payload size. Raise this if jobs occasionally fail with `Read timed out` even though ComfyUI is reachable — a busy/loaded GPU host can be slow to answer a poll without actually being down. |
+| `TURBO_STEPS_T2V_I2V` | `8` | Sampler steps for a turbo t2v/i2v job — see [`docs/extras.md#turbo`](docs/extras.md#turbo). Only relevant when `turbo` is in `COMFYUI_EXTRAS`. |
+| `TURBO_STEPS_R2V` | `4` | Same as above, for r2v/r2i/r2a jobs — r2v's turbo LoRA was trained at a different step count than t2v/i2v's. |
 
 ### LLM prompt-assist (optional)
 
@@ -275,6 +277,15 @@ pointing this project at it:
 This project doesn't provide or download these itself — that list is just
 what `resources/workflows_api/*.json` actually reference; check those files
 yourself if a future model update changes the exact filenames.
+
+Optional, only needed if you enable `turbo` in `COMFYUI_EXTRAS` (see
+[`docs/extras.md#turbo`](docs/extras.md#turbo)) — two LoRAs into
+`models/loras/`:
+
+| Model file | Used by |
+|---|---|
+| `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` | Text-to-video / image-to-video |
+| `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` | Reference-to-video |
 
 ## Updating the ComfyUI workflows
 

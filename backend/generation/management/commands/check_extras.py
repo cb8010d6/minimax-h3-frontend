@@ -21,7 +21,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
-from integrations import comfyui, motion_context, spectrum
+from integrations import comfyui, motion_context, spectrum, turbo
 
 # One entry per extra this app actually knows how to wire in -- see
 # extras.md's "why only one extra is wired up right now" for why this isn't
@@ -30,6 +30,7 @@ from integrations import comfyui, motion_context, spectrum
 # skipped, since that's almost certainly a typo in COMFYUI_EXTRAS.
 _KNOWN_EXTRAS: dict[str, list[str]] = {
     "spectrum": [spectrum.SPECTRUM_NODE_CLASS],
+    "turbo": [turbo.TURBO_LORA_NODE_CLASS, turbo.TURBO_SIGMA_SHIFT_NODE_CLASS],
 }
 
 _LEVEL_LABELS = {
@@ -94,9 +95,36 @@ class Command(BaseCommand):
                         f"{', '.join(missing)}. See extras.md#{slug} for install steps."
                     )
                 )
-            else:
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f"{slug} ({level_label}): detected -- {', '.join(node_classes)} found."
-                    )
+                continue
+
+            self.stdout.write(
+                self.style.SUCCESS(f"{slug} ({level_label}): detected -- {', '.join(node_classes)} found.")
+            )
+
+            if slug == "turbo":
+                # LoraLoaderModelOnly/MiniMaxH3SigmaShift above are both
+                # stock/native nodes -- always present on a matching ComfyUI
+                # version regardless of whether the actual turbo LoRA
+                # weights were ever downloaded. That's the real failure
+                # mode, so check for it separately: the weights file has to
+                # show up in this node's own "lora_name" combo options,
+                # which only lists files ComfyUI actually found under
+                # models/loras/.
+                lora_info = comfyui.get_object_info(turbo.TURBO_LORA_NODE_CLASS) or {}
+                available = (
+                    lora_info.get("input", {}).get("required", {}).get("lora_name", [[]])[0]
                 )
+                missing_loras = [
+                    name
+                    for name in (turbo.LORA_NAME_T2V_I2V, turbo.LORA_NAME_R2V)
+                    if name not in available
+                ]
+                if missing_loras:
+                    self.stdout.write(
+                        self.style.ERROR(
+                            f"  turbo LoRA file(s) not found under models/loras/: "
+                            f"{', '.join(missing_loras)}. See extras.md#turbo."
+                        )
+                    )
+                else:
+                    self.stdout.write(self.style.SUCCESS("  both turbo LoRA weight files found."))

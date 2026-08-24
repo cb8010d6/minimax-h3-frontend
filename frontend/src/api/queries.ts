@@ -88,6 +88,11 @@ export interface CreateJobInput {
    * which matters for a level-1 (default-on) toggle -- see
    * generation/api.py::_resolve_use_spectrum. */
   useSpectrum?: boolean;
+  /** Only meaningful when AppConfig.turbo_level is 0 or 1 (an optional
+   * toggle) -- see extras.md#turbo. Always sent explicitly (never omitted),
+   * same reasoning as useSpectrum above -- see
+   * generation/api.py::_resolve_use_turbo. */
+  useTurbo?: boolean;
 }
 
 export function useCreateJob() {
@@ -108,6 +113,9 @@ export function useCreateJob() {
       }
       if (input.useSpectrum !== undefined) {
         form.set("use_spectrum", input.useSpectrum ? "true" : "false");
+      }
+      if (input.useTurbo !== undefined) {
+        form.set("use_turbo", input.useTurbo ? "true" : "false");
       }
       return apiFetch<GenerationJobDetail>("/jobs/", { method: "POST", body: form });
     },

@@ -329,10 +329,8 @@ COMFYUI_REQUEST_TIMEOUT = env.float("COMFYUI_REQUEST_TIMEOUT", default=15.0)
 #   "spectrum" or "spectrum=0" -> optional, user-facing toggle, default unchecked
 #   "spectrum=1"               -> optional, user-facing toggle, default checked
 #   "spectrum=2"               -> forced on for every job, no toggle shown
-# Parsing is deliberately generic (any "slug=N" token) even though only
-# "spectrum" is wired into the app anywhere below -- see extras.md's "why
-# only one extra is wired up right now" for why this stops short of a full
-# plugin registry.
+# Parsing is deliberately generic (any "slug=N" token) -- "spectrum" and
+# "turbo" are both wired in below, see extras.md.
 _raw_extras = env.list("COMFYUI_EXTRAS", default=[])
 
 
@@ -347,6 +345,19 @@ def _parse_extra_token(token: str) -> tuple[str, int]:
 
 EXTRAS_CONFIG: dict[str, int] = dict(_parse_extra_token(t) for t in _raw_extras if t.strip())
 SPECTRUM_LEVEL = EXTRAS_CONFIG.get("spectrum")  # None | 0 | 1 | 2
+TURBO_LEVEL = EXTRAS_CONFIG.get("turbo")  # None | 0 | 1 | 2
+
+# Sampler steps to use for a job when Turbo is enabled -- see extras.md#turbo,
+# integrations/turbo.py. Separate per MiniMax H3 base-model family since each
+# turbo LoRA was trained/shipped at a different step count (confirmed live
+# against a real ComfyUI instance's /object_info, Aug 2026): t2v/i2v share
+# the "fl2v" base (8 steps), r2v uses "ref2v" (4 steps). Overrides
+# RenderPreset.steps entirely for a turbo job (generation/api.py's
+# job-creation view) -- turbo is only useful at (or near) the step count its
+# LoRA was actually trained for, so this isn't just a speed/quality dial the
+# way RenderPreset.steps is for a normal render.
+TURBO_STEPS_T2V_I2V = env.int("TURBO_STEPS_T2V_I2V", default=8)
+TURBO_STEPS_R2V = env.int("TURBO_STEPS_R2V", default=4)
 
 LLM_API_BASE_URL = env("LLM_API_BASE_URL", default="")
 # Optional -- many self-hosted OpenAI-compatible servers (llama.cpp server,

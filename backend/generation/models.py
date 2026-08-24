@@ -243,6 +243,16 @@ class GenerationJob(models.Model):
         "estimated_seconds above -- the real render is faster than that estimate when this "
         "is set (see extras.md).",
     )
+    use_turbo = models.BooleanField(
+        default=False,
+        help_text="Whether this job used the Turbo LoRA + sigma-shift speedup (see "
+        "extras.md#turbo) -- resolved from the request + settings.TURBO_LEVEL at queue time "
+        "(generation/api.py::_resolve_use_turbo), not editable after. Unlike use_spectrum, "
+        "this also forces the `steps` field above to settings.TURBO_STEPS_T2V_I2V/"
+        "TURBO_STEPS_R2V instead of preset.steps -- turbo is only useful at (or near) the "
+        "step count its LoRA was trained for. Does NOT adjust estimated_seconds above -- "
+        "same reasoning as use_spectrum.",
+    )
 
     class Phase(models.TextChoices):
         """Sub-state of a PROCESSING job, per ComfyUI's own three-stage

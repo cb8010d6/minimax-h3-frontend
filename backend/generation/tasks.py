@@ -52,7 +52,7 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 
-from integrations import comfyui, hooks, media_post, motion_context, spectrum, video_ref
+from integrations import comfyui, hooks, media_post, motion_context, spectrum, turbo, video_ref
 
 from .models import CONTENT_TYPE_BY_MODE, REFERENCE_FLOW_MODES, ContentType, GenerationJob, Mode, ReferenceAsset
 from .signals import job_finished
@@ -170,6 +170,7 @@ def build_api_workflow(
     ref_audio_uploads: list[str] | None = None,
     ref_video_uploads: list[str] | None = None,
     use_spectrum: bool = False,
+    use_turbo: bool = False,
     continuation_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Loads the mode's API-format template and patches in the given values.
@@ -180,12 +181,15 @@ def build_api_workflow(
     reading the template file.
 
     use_spectrum splices in the Spectrum step-forecasting accelerator (see
-    integrations/spectrum.py, extras.md#spectrum) -- only ever True when
-    settings.SPECTRUM_LEVEL actually enables it for this job (resolved at
-    job-creation time by generation/api.py::_resolve_use_spectrum onto
-    GenerationJob.use_spectrum; this function doesn't re-check the setting
-    itself, same as it doesn't re-validate any other already-resolved job
-    field).
+    integrations/spectrum.py, extras.md#spectrum); use_turbo splices in the
+    Turbo LoRA + sigma-shift speedup (see integrations/turbo.py,
+    extras.md#turbo). Both are only ever True when settings.SPECTRUM_LEVEL/
+    TURBO_LEVEL actually enable them for this job (resolved at job-creation
+    time by generation/api.py's _resolve_use_spectrum/_resolve_use_turbo onto
+    GenerationJob.use_spectrum/use_turbo; this function doesn't re-check
+    either setting itself, same as it doesn't re-validate any other
+    already-resolved job field). `steps` should already be the turbo-adjusted
+    value when use_turbo is set -- see _build_workflow_for_job below.
     """
     workflow = _load_api_workflow(mode)
     nodes = _R2V_NODES if mode in REFERENCE_FLOW_MODES else _T2V_I2V_NODES
@@ -253,8 +257,20 @@ def build_api_workflow(
             node_id = _add_load_image_node(workflow, last_frame_upload)
             sampler["last_frame"] = [node_id, 0]
 
+    # Order matters here: each splice function finds the workflow's sole
+    # UNETLoader and rewires *everything* currently downstream of it to sit
+    # after the new node instead -- so whichever one runs LAST ends up
+    # CLOSEST to the loader in the resulting graph. Calling spectrum first,
+    # then turbo, produces loader -> turbo LoRA -> turbo SigmaShift ->
+    # Spectrum -> guider/sampler, the order both extensions' own docs
+    # recommend ("model loader -> [LoRA, if any] -> Spectrum -> guider").
+    # Swapping this order still produces a valid (non-cyclic) graph, just
+    # with Spectrum sitting directly on the loader instead -- untested
+    # against either extension's own recommended shape.
     if use_spectrum:
         workflow = spectrum.apply_spectrum(workflow)
+    if use_turbo:
+        workflow = turbo.apply_turbo(workflow, is_reference_flow=mode in REFERENCE_FLOW_MODES)
 
     if continuation_params:
         # Director Mode only (see GenerationJob.continuation_params'
@@ -273,7 +289,6 @@ def _upload_reference(ref: ReferenceAsset) -> str:
 
 
 def _build_workflow_for_job(job: GenerationJob) -> dict[str, Any]:
-    preset = job.preset
     prompt_text = job.improved_prompt or job.raw_prompt
 
     first_frame_upload = last_frame_upload = None
@@ -326,7 +341,13 @@ def _build_workflow_for_job(job: GenerationJob) -> dict[str, Any]:
         width=job.width,
         height=job.height,
         duration_seconds=job.duration_seconds,
-        steps=preset.steps,
+        # job.steps, not preset.steps -- when use_turbo is set this is
+        # already the turbo-adjusted step count (see
+        # generation/api.py::jobs()), and every other patched value here is
+        # likewise read from the job's own snapshot rather than a live FK
+        # for the same reason (RenderPreset's docstring: later admin edits
+        # shouldn't retroactively change a value already shown to a user).
+        steps=job.steps,
         prompt_text=prompt_text,
         first_frame_upload=first_frame_upload,
         last_frame_upload=last_frame_upload,
@@ -334,6 +355,7 @@ def _build_workflow_for_job(job: GenerationJob) -> dict[str, Any]:
         ref_audio_uploads=ref_audio_uploads,
         ref_video_uploads=ref_video_uploads,
         use_spectrum=job.use_spectrum,
+        use_turbo=job.use_turbo,
         continuation_params=continuation_params,
     )
 
