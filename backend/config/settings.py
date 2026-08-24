@@ -232,7 +232,16 @@ SOCIALACCOUNT_PROVIDERS = {
                     "client_id": _oidc_client_id,
                     "secret": env("OIDC_CLIENT_SECRET", default=""),
                     "settings": {
-                        "server_url": env("OIDC_ISSUER_URL", default=""),
+                        # rstrip: allauth builds the discovery URL as
+                        # f"{server_url}/.well-known/openid-configuration"
+                        # with no normalization of its own -- a trailing
+                        # slash here (as Authentik's own admin UI displays
+                        # the issuer, and as this project's own .env had it
+                        # set to at one point) produces a double slash that
+                        # 404s instead of 200s, which allauth doesn't catch
+                        # (an uncaught requests.HTTPError -> 500 on login,
+                        # not an auth-declined response).
+                        "server_url": env("OIDC_ISSUER_URL", default="").rstrip("/"),
                     },
                 }
             ]
