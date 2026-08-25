@@ -446,6 +446,14 @@ select {
   flex: 2 1 220px;
 }
 
+.toolbar-control-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
 .toolbar-control input[type="range"] {
   width: 100%;
 }

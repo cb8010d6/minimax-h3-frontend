@@ -20,7 +20,7 @@ from rest_framework import serializers
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from generation.api import _MAX_REFERENCE_AUDIO, _MAX_REFERENCE_IMAGES, _MAX_REFERENCE_VIDEO
+from generation.api import _MAX_REFERENCE_AUDIO, _MAX_REFERENCE_IMAGES, _MAX_REFERENCE_VIDEO, _parse_bool
 from generation.models import GenerationJob, Mode, ReferenceAsset, RenderDuration
 from generation.resolution import ASPECT_RATIO_VALUES, DEFAULT_ASPECT_RATIO, compute_resolution, is_valid_aspect_ratio
 from integrations import assembly, comfyui, llm
@@ -89,6 +89,11 @@ class ProjectSerializer(serializers.Serializer):
     overarching_prompt = serializers.CharField()
     aspect_ratio = serializers.CharField(help_text="Applies to every Clip in the project -- not chosen per-clip.")
     quality_label = serializers.CharField(help_text="The shared quality tier every Clip's own preset is resolved from.")
+    use_turbo = serializers.BooleanField(
+        help_text="Whether every Clip in this project renders with the Turbo LoRA speedup -- see "
+        "extras.md#turbo, GET /api/config/'s turbo_level. Same project-wide reasoning as "
+        "quality_label -- not chosen per-clip."
+    )
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
     clip_count = serializers.IntegerField(
@@ -224,6 +229,7 @@ def _serialize_project(project: Project, *, detail: bool = False) -> dict:
         "overarching_prompt": project.overarching_prompt,
         "aspect_ratio": project.aspect_ratio,
         "quality_label": project.quality_label,
+        "use_turbo": project.use_turbo,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         # Only present (non-None) when `project` came from projects()' GET
@@ -305,6 +311,7 @@ def projects(request):
         overarching_prompt=overarching_prompt,
         aspect_ratio=aspect_ratio,
         quality_label=quality_label,
+        use_turbo=_parse_bool(request.data.get("use_turbo", False)),
     )
     return Response(_serialize_project(project, detail=True), status=201)
 
@@ -420,6 +427,11 @@ def project_detail(request, project_id: int):
             if quality_label != project.quality_label:
                 project.quality_label = quality_label
                 resolution_changed = True
+        if "use_turbo" in request.data:
+            use_turbo = _parse_bool(request.data["use_turbo"])
+            if use_turbo != project.use_turbo:
+                project.use_turbo = use_turbo
+                dirty = True
         project.save()
         if resolution_changed:
             services.recompute_project_resolutions(project)

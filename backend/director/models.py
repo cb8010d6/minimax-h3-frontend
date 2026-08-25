@@ -76,6 +76,18 @@ class Project(models.Model):
         "reasoning as aspect_ratio above: quality is a whole-project decision here, not a "
         "per-clip one.",
     )
+    use_turbo = models.BooleanField(
+        default=False,
+        help_text="Whether every Clip in this project renders with the Turbo LoRA speedup (see "
+        "extras.md#turbo) -- same project-wide reasoning as quality_label above, since turbo "
+        "forces a fixed low step count that overrides quality_label's own steps entirely. Still "
+        "gated server-side by settings.TURBO_LEVEL at render time (see "
+        "generation/api.py::_resolve_use_turbo, called from director/services.py's "
+        "_build_job_for_clip()) -- this field alone doesn't guarantee turbo actually applies, "
+        "e.g. it's ignored if TURBO_LEVEL is None (not offered) and forced True regardless if "
+        "TURBO_LEVEL is 2. Changing it marks every clip dirty but does NOT recompute width/"
+        "height (unlike aspect_ratio/quality_label) -- turbo doesn't change resolution.",
+    )
     script_text = models.TextField(
         blank=True,
         default="",

@@ -14,6 +14,7 @@ import {
 import { useConfig, usePresets, useRefinePrompt } from "../../api/queries";
 import { CONTINUATION_CAPABLE_MODES, MODE_LABELS } from "../../api/types";
 import type { Clip } from "../../api/directorTypes";
+import { InfoTooltip } from "../shared/InfoTooltip";
 import { ClipBox } from "./ClipBox";
 import { ClipEditorPanel } from "./ClipEditorPanel";
 import { ProjectResourcesPanel } from "./ProjectResourcesPanel";
@@ -143,6 +144,10 @@ export function ProjectBoard() {
 
   async function handleQualityChange(qualityLabel: string) {
     await updateProject.mutateAsync({ projectId, qualityLabel });
+  }
+
+  async function handleTurboChange(useTurbo: boolean) {
+    await updateProject.mutateAsync({ projectId, useTurbo });
   }
 
   function handleTitleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -292,6 +297,24 @@ export function ProjectBoard() {
                   ))}
                 </select>
               </label>
+              {config.data?.turbo_level != null &&
+                (config.data.turbo_level === 2 ? (
+                  <span className="hint toolbar-control-checkbox">
+                    🚀 Turbo mode is always on for this deployment.
+                  </span>
+                ) : (
+                  <label className="toolbar-control-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={project.data.use_turbo}
+                      onChange={(e) => void handleTurboChange(e.target.checked)}
+                    />{" "}
+                    🚀 Turbo mode
+                    <InfoTooltip
+                      text={`Renders every clip at just ${config.data.turbo_steps_t2v_i2v} (t2v/i2v) or ${config.data.turbo_steps_r2v} (r2v) sampler steps via a distilled LoRA -- much faster, but softer/less consistent than a full render. Overrides quality's own steps for every clip in this project.`}
+                    />
+                  </label>
+                ))}
             </div>
           </fieldset>
 

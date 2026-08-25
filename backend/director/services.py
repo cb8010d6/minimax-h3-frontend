@@ -15,10 +15,10 @@ from django.db import transaction
 from django.db.models import F
 from django_q.tasks import async_task
 
-from generation.api import _MAX_REFERENCE_AUDIO
-from generation.models import GenerationJob, Mode, ReferenceAsset, RenderDuration, RenderPreset
+from generation.api import _MAX_REFERENCE_AUDIO, _resolve_use_turbo
+from generation.models import REFERENCE_FLOW_MODES, GenerationJob, Mode, ReferenceAsset, RenderDuration, RenderPreset
 from generation.resolution import compute_resolution
-from integrations import media_post, motion_context
+from integrations import media_post, motion_context, turbo
 
 from .models import CONTINUATION_CAPABLE_MODES, Clip, ClipReferenceAsset, JobProjectTag, Project, ProjectResource
 
@@ -445,6 +445,18 @@ def _resolve_chain_params(clip: Clip) -> dict | None:
     # own values in practice -- reading from chain_clips[0] here too is
     # belt-and-suspenders against any clip created before that lock existed.
     head = chain_clips[0]
+    # Same override as _build_job_for_clip() below: turbo's LoRA is only
+    # useful at its own trained step count, so if the whole project has
+    # turbo on, that -- not head.preset.steps -- is what every scene in
+    # this run actually needs to agree on (MiniMaxH3ChainLoopStart rejects
+    # a resume whose settings don't match scene 1's, see this function's
+    # own docstring above).
+    use_turbo = _resolve_use_turbo(clip.project.use_turbo)
+    default_steps = (
+        turbo.default_steps(is_reference_flow=head.mode in REFERENCE_FLOW_MODES)
+        if use_turbo
+        else head.preset.steps
+    )
     return {
         "shots": shots,
         "prompt_prefix": clip.project.overarching_prompt,
@@ -453,7 +465,7 @@ def _resolve_chain_params(clip: Clip) -> dict | None:
         "width": clip.width,
         "height": clip.height,
         "default_duration_seconds": head.duration.duration_seconds,
-        "default_steps": head.preset.steps,
+        "default_steps": default_steps,
     }
 
 
@@ -592,6 +604,17 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
                 pred_job.video_file.close()
             anchor_frame = media_post.extract_last_frame(video_bytes)
 
+    # Same override generation/api.py's jobs() POST handler applies:
+    # turbo's LoRA is only useful at its own trained step count, so it
+    # replaces clip.preset.steps entirely rather than layering on top of
+    # it -- see settings.TURBO_STEPS_T2V_I2V/TURBO_STEPS_R2V.
+    use_turbo = _resolve_use_turbo(clip.project.use_turbo)
+    steps = (
+        turbo.default_steps(is_reference_flow=clip.mode in REFERENCE_FLOW_MODES)
+        if use_turbo
+        else clip.preset.steps
+    )
+
     job = GenerationJob.objects.create(
         user=clip.project.user,
         mode=clip.mode,
@@ -600,12 +623,13 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
         raw_prompt=render_prompt,
         improved_prompt=render_improved_prompt,
         megapixels=clip.preset.megapixels,
-        steps=clip.preset.steps,
+        steps=steps,
         aspect_ratio=clip.project.aspect_ratio,
         width=clip.width,
         height=clip.height,
         duration_seconds=clip.duration.duration_seconds,
         estimated_seconds=clip.duration.estimated_render_seconds,
+        use_turbo=use_turbo,
         continuation_params=chain_params,
     )
     # Permanent, unlike clip.current_job below -- see JobProjectTag's own

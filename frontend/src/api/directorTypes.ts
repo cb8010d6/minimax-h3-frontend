@@ -71,6 +71,11 @@ export interface Project {
   // The shared quality tier every Clip's own (per-mode) preset is
   // resolved from -- also project-wide, not chosen per-clip.
   quality_label: string;
+  // Whether every Clip renders with the Turbo LoRA speedup (see
+  // extras.md#turbo) -- also project-wide, and overrides quality_label's
+  // own steps entirely when it applies. Still gated server-side by
+  // GET /api/config/'s turbo_level.
+  use_turbo: boolean;
   created_at: string;
   updated_at: string;
   // Only set by the list endpoint (useDirectorProjects) -- null on a

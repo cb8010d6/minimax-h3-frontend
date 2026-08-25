@@ -99,6 +99,7 @@ export function useUpdateDirectorProject() {
       overarchingPrompt,
       aspectRatio,
       qualityLabel,
+      useTurbo,
       scriptText,
     }: {
       projectId: number;
@@ -108,6 +109,9 @@ export function useUpdateDirectorProject() {
       // preset/width/height and marks the whole project dirty.
       aspectRatio?: string;
       qualityLabel?: string;
+      // Project-wide, like qualityLabel -- marks every clip dirty but
+      // doesn't recompute width/height (turbo doesn't change resolution).
+      useTurbo?: boolean;
       // Purely informational -- doesn't affect any clip.
       scriptText?: string;
     }) =>
@@ -118,6 +122,7 @@ export function useUpdateDirectorProject() {
           overarching_prompt: overarchingPrompt,
           aspect_ratio: aspectRatio,
           quality_label: qualityLabel,
+          use_turbo: useTurbo,
           script_text: scriptText,
         }),
       }),
