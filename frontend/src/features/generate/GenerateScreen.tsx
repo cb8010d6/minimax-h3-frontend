@@ -210,6 +210,8 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
     setRawPrompt(redoJob.raw_prompt);
     setImprovedPrompt(redoJob.improved_prompt || "");
     setPendingRedoDurationId(redoJob.duration_id);
+    setUseSpectrum(redoJob.use_spectrum);
+    setUseTurbo(redoJob.use_turbo);
 
     const redoId = redoJob.id;
     activeRedoIdRef.current = redoId;
