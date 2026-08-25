@@ -208,6 +208,16 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
               <dd>{resolutionLabel(job.data)}</dd>
               <dt>Render time</dt>
               <dd>{renderTimeLabel(job.data)}</dd>
+              {(job.data.use_turbo || job.data.use_spectrum) && (
+                <>
+                  <dt>Speedups used</dt>
+                  <dd>
+                    {[job.data.use_turbo && "🚀 Turbo", job.data.use_spectrum && "⚡ Spectrum"]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </dd>
+                </>
+              )}
               {directorMembership && (
                 <>
                   <dt>Director project</dt>
