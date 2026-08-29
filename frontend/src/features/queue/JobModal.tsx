@@ -241,14 +241,15 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
               <dd>{resolutionLabel(job.data)}</dd>
               <dt>Render time</dt>
               <dd>{renderTimeLabel(job.data)}</dd>
-              {(job.data.use_turbo || job.data.use_spectrum) && (
+              {/* Turbo is ALWAYS shown (owner request: the detail page must
+                  say whether a job used turbo, including "No") -- unlike
+                  Spectrum, which only appears when it was actually used. */}
+              <dt>Turbo</dt>
+              <dd>{job.data.use_turbo ? "Yes" : "No"}</dd>
+              {job.data.use_spectrum && (
                 <>
-                  <dt>Speedups used</dt>
-                  <dd>
-                    {[job.data.use_turbo && "🚀 Turbo", job.data.use_spectrum && "⚡ Spectrum"]
-                      .filter(Boolean)
-                      .join(", ")}
-                  </dd>
+                  <dt>Spectrum</dt>
+                  <dd>Yes</dd>
                 </>
               )}
               {directorMembership && (

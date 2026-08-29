@@ -1004,6 +1004,13 @@ select {
   margin-left: auto;
 }
 
+/* Turbo jobs stand out in the list (owner request): accent color on the
+   quality label, on top of the 🚀 marker QueueSidebar adds. */
+.queue-entry-quality-turbo {
+  color: var(--accent);
+  opacity: 1;
+}
+
 .job-progress {
   margin-top: 6px;
 }

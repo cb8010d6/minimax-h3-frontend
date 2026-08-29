@@ -60,6 +60,13 @@ interface ClipEditorPanelProps {
   // promote_clip_reference()), checked here so the button isn't shown
   // only to 400 on click.
   allClipsReference: boolean;
+  // The project's Turbo flag (Project.use_turbo) -- there is no per-clip
+  // turbo in Director mode, so the panel shows this as the clip's
+  // effective turbo state, resolved against config's turbo_level exactly
+  // the way backend/generation/api.py::_resolve_use_turbo() does when
+  // director/services.py's _build_job_for_clip() renders it (see
+  // extras.md#turbo).
+  useTurbo: boolean;
   onClose: () => void;
 }
 
@@ -71,6 +78,7 @@ export function ClipEditorPanel({
   previousClipsContext,
   projectResourceLabels,
   allClipsReference,
+  useTurbo,
   onClose,
 }: ClipEditorPanelProps) {
   const config = useConfig();
@@ -116,6 +124,24 @@ export function ClipEditorPanel({
   const isBusy = clip.current_job_status === "queued" || clip.current_job_status === "processing";
   const failed = clip.current_job_status === "done" && !clip.video_url;
   const combinedExtraContext = [overarchingPrompt, previousClipsContext].filter(Boolean).join("\n\n");
+
+  // The clip's effective turbo state, mirroring the backend's own
+  // resolution (generation/api.py::_resolve_use_turbo, called from
+  // director/services.py's _build_job_for_clip()): turbo_level null means
+  // turbo isn't offered in this deployment at all (no row), level 2 forces
+  // it on regardless of the project flag, and levels 0/1 fall through to
+  // the project's own use_turbo. Shown in the toolbar below so the detail
+  // page always says whether this clip renders turbo (owner request) --
+  // worded as project-wide because there is no per-clip toggle.
+  const turboLevel = config.data?.turbo_level ?? null;
+  const turboLabel =
+    turboLevel === 2
+      ? "On -- always on for this deployment"
+      : turboLevel === null
+        ? null
+        : useTurbo
+          ? "On (project-wide)"
+          : "Off (project-wide)";
 
   async function savePrompt() {
     if (promptDraft === clip.prompt) return;
@@ -264,6 +290,11 @@ export function ClipEditorPanel({
           <p className="hint clip-editor-locked-note">
             Quality and aspect ratio are set for the whole project — see the project board.
           </p>
+          {turboLabel && (
+            <p className="hint clip-editor-locked-note">
+              Turbo: {turboLabel}
+            </p>
+          )}
           {clip.continues_previous && (
             <p className="hint clip-editor-locked-note">
               Length is locked to the previous clip's while continuing it — real motion/audio

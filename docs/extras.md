@@ -415,6 +415,15 @@ the two `.safetensors` files above under `ComfyUI/models/loras/`.
   does not shrink when turbo is on -- the real render is faster than the
   quoted estimate, and the frontend hint says so rather than faking an
   adjustment.
+- Display: turbo jobs are marked everywhere a job is shown -- the queue
+  list puts a 🚀 marker + accent color on the quality label
+  (`QueueSidebar.tsx`), the job detail modal (`JobModal.tsx`) always shows
+  a Turbo Yes/No line (even when *not* used), and Director's clip panel
+  (`ClipEditorPanel.tsx`) shows the clip's effective turbo state in its
+  toolbar -- turbo is project-wide in Director mode, so that's the
+  project's own flag resolved against `turbo_level` exactly like
+  `_resolve_use_turbo()` does at render time (hidden when `turbo_level`
+  is null, i.e. turbo not offered at all in this deployment).
 - `manage.py check_extras` (see [Configuration](#configuration)) checks both
   node classes *and*, turbo-specifically, that both LoRA `.safetensors`
   files actually show up in `LoraLoaderModelOnly`'s live `lora_name`

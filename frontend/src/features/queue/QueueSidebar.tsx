@@ -113,7 +113,18 @@ function QueueEntry({ job, onOpen }: { job: GenerationJob; onOpen: () => void })
               <span className="queue-entry-time">{relativeTime(job.created_at)}</span>
               <span className="queue-entry-id">#{job.id}</span>
             </span>
-            <span className="queue-entry-quality">{job.preset_label}</span>
+            {/* Turbo marker on the quality label (owner request: turbo jobs
+                should stand out in the list without opening them) -- the
+                accent color below carries the same signal for non-color
+                users. */}
+            <span className={`queue-entry-quality${job.use_turbo ? " queue-entry-quality-turbo" : ""}`}>
+              {job.use_turbo && (
+                <span aria-hidden="true" title="Rendered with Turbo mode">
+                  🚀
+                </span>
+              )}{" "}
+              {job.preset_label}
+            </span>
           </span>
           {job.status === "processing" && <JobProgressBar job={job} />}
         </span>

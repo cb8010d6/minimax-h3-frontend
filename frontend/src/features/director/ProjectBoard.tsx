@@ -437,6 +437,10 @@ export function ProjectBoard() {
           previousClipsContext={previousClipsContext}
           projectResourceLabels={resourceLabels}
           allClipsReference={canAddResources}
+          // selectedClip can only be non-null when project.data is (it's
+          // derived from project.data?.clips), so the ?? false is just to
+          // satisfy the type checker, never taken in practice.
+          useTurbo={project.data?.use_turbo ?? false}
           onClose={() => setSelectedClipId(null)}
         />
       )}

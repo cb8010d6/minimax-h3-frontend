@@ -777,7 +777,12 @@ single `GenerationJob`-backed render, positioned by `order`.
   screen, with the project's `overarching_prompt` threaded through as
   `extra_context` and its resources' `token_label`s prepended to the
   reference-labels list passed alongside — only a duration slider remains
-  here; quality/aspect ratio moved to the board, see above — reference
+  here; quality/aspect ratio moved to the board, see above — and a Turbo
+  status line in the toolbar showing the clip's *effective* turbo state,
+  since Director has no per-clip turbo: the project's own `use_turbo`
+  flag resolved against `turbo_level` exactly like `_resolve_use_turbo()`
+  does at render time (hidden when `turbo_level` is null, i.e. turbo not
+  offered in this deployment) — reference
   slots, render/cancel/delete). `ScriptPlanModal` is the two-step
   "propose, then confirm" UI for the LLM planning endpoints above —
   lists the project's shared references (token + label) up front when
@@ -943,10 +948,11 @@ distinguishes a `done`-but-no-`video_url` job as "Failed" for display
 purposes only — the backend's real `status` values are `queued`/
 `processing`/`done`/`cancelled`, see "Backend apps" above), the job's
 quality-tier label (`preset_label`, right-aligned on that same row) so the
-list shows what quality each job rendered at without opening it, a relative
+list shows what quality each job rendered at without opening it — with a
+🚀 marker + accent color on that label when `use_turbo` is set, so turbo
+jobs stand out in the list without opening them — a relative
 timestamp, and — once `done` with a `video_url` — a poster-image thumbnail
 (`thumbnail_url`, falling back to a bare `<video preload="metadata">` for
-jobs rendered before that field existed). Clicking an entry opens `JobModal`
 for that job's id.
 
 **`features/queue/JobModal.tsx`** (new) — fetches full detail via the
@@ -955,7 +961,11 @@ AI-refined one if used), resolution (`width×height`, `aspect_ratio`, and
 `megapixels` — direct user request, previously missing from this view
 despite being on the job already) and length, render time (actual
 `finished_at − started_at` once done, else the
-`~estimated_seconds` figure), the video itself large with controls, a
+`~estimated_seconds` figure), a **Turbo** line that always says Yes/No
+(whether this job rendered with the Turbo LoRA speedup — direct user
+request: the detail page must show it even when it's *not* used, unlike
+Spectrum, which only gets a line when actually used), the video itself
+large with controls, a
 **Download** link (`<a href={video_url} download>` — the video URL is
 already same-origin thanks to the `/media/` fix above, so this just works),
 a **Redo** button (hands the fetched job up to `MainLayout` as
