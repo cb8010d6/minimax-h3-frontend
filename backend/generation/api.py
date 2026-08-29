@@ -317,6 +317,13 @@ class GenerationJobSerializer(serializers.Serializer):
         help_text="Included at list level (not just detail) so the frontend can show a "
         "title without a second request per job."
     )
+    prompt_hash = serializers.CharField(
+        help_text="FNV-1a 32-bit hash (8 hex chars) of the prompt this job actually "
+        "rendered with -- improved_prompt or raw_prompt, the same resolution the render "
+        "task uses (see generation/tasks.py). The frontend derives a stable per-prompt "
+        "color for the queue list's right-edge marker from it (see "
+        "frontend/src/features/queue/promptColor.ts); cosmetic, not an identity."
+    )
     title = serializers.CharField(
         allow_blank=True,
         help_text="User-editable label (see PATCH below) -- blank means the frontend should "
@@ -700,6 +707,24 @@ def _serialize_reference(ref: ReferenceAsset) -> dict:
     }
 
 
+def _prompt_hash(prompt: str) -> str:
+    """FNV-1a 32-bit hash of a prompt string, as 8 lowercase hex chars.
+
+    The queue list shows a few-px color line per job whose hue is derived
+    from the prompt that job actually rendered with, so the same prompt
+    (or a re-render of it) always gets the same color without the list
+    payload carrying full prompt text (the frontend maps hash -> hue in
+    frontend/src/features/queue/promptColor.ts). FNV-1a instead of
+    hashlib: a few lines of pure arithmetic, no import, and its 32-bit
+    space distributes well enough across 360 hues for a cosmetic marker.
+    """
+    h = 0x811C9DC5
+    for byte in prompt.encode("utf-8"):
+        h ^= byte
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return f"{h:08x}"
+
+
 def _serialize_job(
     job: GenerationJob, *, detail: bool = False, expected_finish_time=None
 ) -> dict:
@@ -709,6 +734,11 @@ def _serialize_job(
         "content_type": CONTENT_TYPE_BY_MODE[job.mode],
         "status": job.status,
         "raw_prompt": job.raw_prompt,
+        # Hash of the prompt actually sent to ComfyUI -- same resolution as
+        # tasks.py's render path (improved_prompt or raw_prompt) -- so the
+        # queue list's per-row color line (see _prompt_hash) is stable
+        # across re-renders without shipping full prompt text per list item.
+        "prompt_hash": _prompt_hash(job.improved_prompt or job.raw_prompt),
         "title": job.title,
         "is_favorite": job.is_favorite,
         "is_archived": job.is_archived,

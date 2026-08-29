@@ -493,7 +493,13 @@ ones I invite"):
   Every job response (list, detail, and the
   create response itself) includes `raw_prompt` (lifted to the base
   serializer, not detail-only, so the frontend's queue sidebar can show a
-  title without a second request per job) and `expected_finish_time` (via
+  title without a second request per job), `prompt_hash` (FNV-1a 32-bit,
+  8 hex chars, of the prompt actually sent to ComfyUI — `improved_prompt
+  or raw_prompt`, the same resolution `tasks.py` uses — so the queue list
+  can derive a stable per-prompt color line without shipping full prompt
+  text per item; see `api.py::_prompt_hash()` and
+  `frontend/src/features/queue/promptColor.ts`), and
+  `expected_finish_time` (via
   `queue.expected_finish_times()`, `null` once `done`), plus `phase` and
   `progress_current`/`progress_total` (`0016_generationjob_phase_progress.py`)
   — populated live by `integrations/comfyui.py`'s
