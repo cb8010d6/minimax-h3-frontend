@@ -1,16 +1,23 @@
 import json
 from pathlib import Path
 
+from django.conf import settings
 from django.test import SimpleTestCase
 
 from integrations.spectrum import apply_spectrum
 
-# Not settings.RESOURCES_DIR: that only resolves once resources/ is baked
-# into the image at Docker build time (see README's "Updating the ComfyUI
-# workflows"), same reason scripts/export_workflow_api.py takes an explicit
-# path instead of using it. This walks up from backend/generation/ to the
-# repo root instead, so the test also works locally / in CI.
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# The t2v template lives in the repo-root resources/ when running from the
+# source tree, but under backend/resources/ inside the Docker image
+# (backend/Dockerfile copies backend/ and resources/ into /app/ together,
+# so settings.RESOURCES_DIR resolves there — the same path tasks.py's
+# render path uses at runtime). Locally RESOURCES_DIR points at a
+# nonexistent backend/resources/, so try the image path first, then walk
+# up from generation/ to the repo root for the source-tree case.
+_WORKFLOW_FILENAME = "video_minimax_h3_t2v.api.json"
+_WORKFLOW_ROOTS = (
+    settings.RESOURCES_DIR,
+    Path(__file__).resolve().parents[2] / "resources",
+)
 
 
 class ApplySpectrumTests(SimpleTestCase):
@@ -20,8 +27,14 @@ class ApplySpectrumTests(SimpleTestCase):
     (e.g. a re-export moves off a single UNETLoader)."""
 
     def _load_t2v_workflow(self):
-        path = _REPO_ROOT / "resources" / "workflows_api" / "video_minimax_h3_t2v.api.json"
-        return json.loads(path.read_text(encoding="utf-8"))
+        for root in _WORKFLOW_ROOTS:
+            path = root / "workflows_api" / _WORKFLOW_FILENAME
+            if path.is_file():
+                return json.loads(path.read_text(encoding="utf-8"))
+        raise FileNotFoundError(
+            f"{_WORKFLOW_FILENAME} not found under either {_WORKFLOW_ROOTS[0]} or "
+            f"{_WORKFLOW_ROOTS[1]}"
+        )
 
     def test_splices_in_after_the_sole_unet_loader(self):
         workflow = self._load_t2v_workflow()
