@@ -953,6 +953,13 @@ list shows what quality each job rendered at without opening it — with a
 jobs stand out in the list without opening them — a relative
 timestamp, and — once `done` with a `video_url` — a poster-image thumbnail
 (`thumbnail_url`, falling back to a bare `<video preload="metadata">` for
+jobs rendered before that field existed). Each row also carries a few-px
+color line on its right edge whose hue is derived from the job's
+`prompt_hash` (see `features/queue/promptColor.ts` and the `prompt_hash`
+field described in "Backend apps" above): the backend hashes the prompt
+the job actually rendered with, so the same prompt — or a re-render of it —
+always gets the same color no matter where it sits in the list, a cheap
+visual grouping aid in a long queue. Clicking an entry opens `JobModal`
 for that job's id.
 
 **`features/queue/JobModal.tsx`** (new) — fetches full detail via the
@@ -974,7 +981,15 @@ shown only while `status` is `queued` or `processing` — see "Backend apps"
 above for how a `processing` cancel actually resolves asynchronously
 server-side), and a **Delete** button (`DELETE /api/jobs/{id}/`, disabled
 with an explanatory `title` while `status === "processing"` — mirroring the
-backend's 409 rather than just discovering it from a failed request).
+backend's 409 rather than just discovering it from a failed request). The
+less-frequent extras — the **Steam Deck video** export (see "Media
+post-processing" above) and **Create Director project** (see the Director
+section below) — live in a "⋯ More" submenu in the same action row rather
+than as top-level buttons (direct user request: keep the row short): a
+plain-`<div>` menu (a `<button>` can't legally contain another) that opens
+*upward* because `.modal` is `overflow-y: auto` (a downward menu would hit
+the modal's scroll edge), closes on outside-click or Escape, and whose
+trigger only appears when at least one item qualifies for the job.
 Known gap carried over from before: the list-level `didJobFail()` label is
 frontend-only, still derived from `video_url`'s absence rather than the
 backend's real `error_message` (which the modal *does* show, now that a

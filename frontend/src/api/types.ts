@@ -199,6 +199,12 @@ export interface GenerationJob {
   content_type: ContentType;
   status: JobStatus;
   raw_prompt: string;
+  // FNV-1a hash (8 hex chars) of the prompt this job actually rendered with
+  // (improved_prompt or raw_prompt -- the same resolution the backend's
+  // render task uses, see backend/generation/tasks.py). The queue list maps
+  // it to a stable per-prompt color for its right-edge marker
+  // (features/queue/promptColor.ts); cosmetic, not an identity.
+  prompt_hash: string;
   // User-editable label (see useUpdateJob) -- blank means the frontend
   // should fall back to raw_prompt, see features/queue/jobTitle.ts.
   title: string;

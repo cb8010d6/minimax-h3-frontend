@@ -1011,6 +1011,22 @@ select {
   opacity: 1;
 }
 
+/* Right-edge color line per row: hue derived from the job's prompt hash
+   (see QueueSidebar.tsx / promptColor.ts) -- a few px of color so the same
+   prompt (or a re-render of it) is visually findable in a long list.
+   pointer-events: none keeps it from eating clicks on the row button
+   beneath. */
+.queue-entry-prompt-color {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  right: 4px;
+  width: 4px;
+  border-radius: 2px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 .job-progress {
   margin-top: 6px;
 }
@@ -1234,6 +1250,41 @@ select {
    pushed to the far end of the row so it's never adjacent to Download/Redo. */
 .modal-actions .button-danger {
   margin-left: auto;
+}
+
+/* The "⋯ More" submenu in JobModal's action row (Steam Deck export /
+   Create Director project). .modal-more is just a positioning anchor
+   inside the flex row -- the trigger button itself keeps the row's
+   default button styling. */
+.modal-more {
+  position: relative;
+}
+
+.modal-more-menu {
+  position: absolute;
+  /* Opens UPWARD: .modal is overflow-y: auto, so a downward menu would
+     run into the modal's scroll edge and get clipped, while the action
+     row sits near the modal's bottom with room above it. */
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.modal-more-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  white-space: nowrap;
 }
 
 /* Admin / invites */

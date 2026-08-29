@@ -3,6 +3,7 @@ import { useJobs, usePresets, useQueueEstimate, useUpdateJob } from "../../api/q
 import { useDirectorProjects, useJobMemberships } from "../../api/directorQueries";
 import { MODE_LABELS, type GenerationJob, type JobStatus } from "../../api/types";
 import { displayTitle } from "./jobTitle";
+import { promptColor } from "./promptColor";
 import { JobProgressBar } from "./JobProgressBar";
 
 const NOTIFY_STORAGE_KEY = "notifyOnJobDone";
@@ -97,6 +98,18 @@ function QueueEntry({ job, onOpen }: { job: GenerationJob; onOpen: () => void })
           <span aria-hidden="true">🗄</span>
         </button>
       </div>
+      {/* Right-edge color line: hue derived from the prompt this job actually
+          rendered with (improved_prompt or raw_prompt -- the backend hashes
+          it, see promptColor.ts), so the same prompt (or a re-render of it)
+          always gets the same color no matter where the job sits in the
+          list. Sibling of queue-entry-button for the same <button>-can't-
+          nest-<button> reason as the quick actions above; pointer-events:
+          none in App.css keeps it from eating clicks on the row beneath. */}
+      <span
+        className="queue-entry-prompt-color"
+        style={{ backgroundColor: promptColor(job.prompt_hash) }}
+        aria-hidden="true"
+      />
       <button type="button" className="queue-entry-button" onClick={onOpen}>
         <span className="queue-entry-thumb">
           <QueueThumb job={job} />

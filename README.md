@@ -39,11 +39,11 @@ entrypoint via Docker Compose.
 - **Invite-only accounts** — no open signup; log in via your own OIDC
   provider, or via admin-issued invite links
 - **A per-job history** — every past render, with download/delete/redo
-- **Steam Deck start video export** — a "Steam Deck video" button on any
-  finished video job converts it to the 1280×800 VP9+Opus WebM format
-  Steam Deck's custom startup-video replacement needs; pick the "8:5
-  (Steam Deck start video)" aspect ratio when generating so the render
-  itself is already close to that shape
+- **Steam Deck start video export** — a "Steam Deck video" action in a
+  finished video job's "⋯ More" menu converts it to the 1280×800 VP9+Opus
+  WebM format Steam Deck's custom startup-video replacement needs; pick
+  the "8:5 (Steam Deck start video)" aspect ratio when generating so the
+  render itself is already close to that shape
 - **Separate accounts, separate renders** — everyone only ever sees their
   own queue and history, never anyone else's jobs or prompts
 - **Director Mode** — a video-editor-style board for sequencing multiple
