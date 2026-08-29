@@ -17,10 +17,12 @@ purely for documentation and aren't used for real validation.
 """
 
 import json
+import logging
 from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
@@ -31,7 +33,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from integrations import comfyui, llm, motion_context, turbo
+from integrations import comfyui, llm, media_post, motion_context, turbo
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     CONTENT_TYPE_BY_MODE,
@@ -1108,3 +1112,45 @@ def cancel_job(request, job_id: int):
         comfyui.cancel_prompt(job.comfyui_prompt_id)
 
     return Response(_serialize_job(job, detail=True))
+
+
+@extend_schema(
+    summary="Export a finished video job as a Steam Deck start video",
+    description=(
+        "Transcodes this job's already-rendered video into a 1280x800 VP9+Opus WebM -- the "
+        "format Steam Deck's custom startup-movie replacement requires (see "
+        "integrations/media_post.py::to_steam_deck_webm(); scaled + letterboxed to fit exactly "
+        "regardless of the job's actual render resolution -- see resolution.py's '8:5' aspect "
+        "ratio entry for rendering closer to that shape up front). Runs ffmpeg synchronously on "
+        "request rather than storing a pre-made copy -- VP9's CPU encode is slow (no hardware "
+        "encoder is available in this container), so this can take up to "
+        "media_post.STEAM_DECK_EXPORT_TIMEOUT seconds for a longer clip."
+    ),
+    responses={
+        200: OpenApiResponse(description="video/webm bytes (Content-Disposition: attachment)."),
+        404: OpenApiResponse(description="Not found, or this job has no rendered video."),
+        502: OpenApiResponse(ErrorResponseSerializer, description="ffmpeg failed or timed out."),
+    },
+    tags=["generation"],
+)
+@api_view(["GET"])
+def steam_deck_export(request, job_id: int):
+    job = get_object_or_404(GenerationJob, id=job_id, user=request.user)
+    if CONTENT_TYPE_BY_MODE[job.mode] != ContentType.VIDEO or not job.video_file:
+        return Response({"error": "This job has no rendered video to export."}, status=404)
+
+    job.video_file.open("rb")
+    try:
+        video_bytes = job.video_file.read()
+    finally:
+        job.video_file.close()
+
+    try:
+        webm_bytes = media_post.to_steam_deck_webm(video_bytes)
+    except media_post.FfmpegError:
+        logger.exception("Steam Deck export failed for job %s", job_id)
+        return Response({"error": "Video conversion failed -- see server logs."}, status=502)
+
+    response = HttpResponse(webm_bytes, content_type="video/webm")
+    response["Content-Disposition"] = f'attachment; filename="job_{job_id}_steam_deck.webm"'
+    return response

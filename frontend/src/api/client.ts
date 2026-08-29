@@ -3,7 +3,11 @@
 // ("Why a reverse-proxy-fronted stack"): nginx makes the SPA same-origin
 // with the API, so plain cookie auth works with no CORS/JWT plumbing.
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
+// Exported for the rare direct-link case (e.g. JobModal's Steam Deck export
+// download) that can't go through apiFetch() -- a plain <a href download>
+// needs a real URL, not a fetch() call whose response it can't hand to the
+// browser's own save-file flow.
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 function getCookie(name: string): string | null {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));

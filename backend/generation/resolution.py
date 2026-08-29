@@ -17,15 +17,27 @@ from __future__ import annotations
 
 import re
 
-# Mirrors ResolutionSelector's own aspect_ratio combo options exactly (see
-# backend/scripts/object_info_cache/ResolutionSelector.json, fetched live
-# from ComfyUI) -- (value, label) pairs, value is what the API/frontend use.
+# (value, label) pairs, value is what the API/frontend use. Every entry
+# except "8:5" mirrors ResolutionSelector's own aspect_ratio combo options
+# exactly (see backend/scripts/object_info_cache/ResolutionSelector.json,
+# fetched live from ComfyUI) -- harmless to add our own on top since
+# build_api_workflow() always overwrites ResolutionSelector's width/height
+# with a literal int anyway (see that function's own comment), it never
+# actually reads this node's aspect_ratio widget.
+# "8:5" (1280x800) exists for Steam Deck custom startup-video export (see
+# integrations/media_post.py::to_steam_deck_webm(), generation/api.py's
+# steam_deck_export view) -- picking it doesn't guarantee an exact 1280x800
+# render (that depends on the chosen preset's megapixels too, rounded to
+# RESOLUTION_MULTIPLE), it just keeps the render's aspect close to the
+# export's target so that step's scale+letterbox has as little to correct
+# for as possible.
 ASPECT_RATIOS: list[tuple[str, str]] = [
     ("1:1", "1:1 (Square)"),
     ("2:3", "2:3 (Portrait Photo)"),
     ("3:2", "3:2 (Photo)"),
     ("3:4", "3:4 (Portrait Standard)"),
     ("4:3", "4:3 (Standard)"),
+    ("8:5", "8:5 (Steam Deck start video)"),
     ("9:16", "9:16 (Portrait Widescreen)"),
     ("16:9", "16:9 (Widescreen)"),
     ("21:9", "21:9 (Ultrawide)"),

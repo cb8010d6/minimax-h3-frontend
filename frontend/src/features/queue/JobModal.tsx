@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../../api/client";
 import { useCancelJob, useDeleteJob, useJob, useUpdateJob } from "../../api/queries";
 import { useCreateProjectFromJob, useJobMemberships } from "../../api/directorQueries";
 import { MODE_LABELS, type GenerationJobDetail } from "../../api/types";
@@ -52,6 +53,8 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [steamDeckExporting, setSteamDeckExporting] = useState(false);
+  const [steamDeckError, setSteamDeckError] = useState(false);
 
   // Reset per-job UI state in case this modal instance is reused for a
   // different job rather than remounted (e.g. clicking straight from one
@@ -59,6 +62,8 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
   useEffect(() => {
     setConfirmingDelete(false);
     setEditingTitle(false);
+    setSteamDeckExporting(false);
+    setSteamDeckError(false);
   }, [jobId]);
 
   async function handleDelete() {
@@ -74,6 +79,34 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
     const project = await createProjectFromJob.mutateAsync(jobId);
     onClose();
     navigate(`/director/${project.id}`);
+  }
+
+  // Not a plain <a href download> -- the conversion runs synchronously on
+  // the server (VP9 CPU encoding, can take a while), so a bare link would
+  // leave the browser showing nothing at all until it's done. Fetching the
+  // blob ourselves lets the button show "Converting…" for that whole time
+  // instead, then hands the browser a real file via a temporary object URL.
+  async function handleSteamDeckExport() {
+    setSteamDeckExporting(true);
+    setSteamDeckError(false);
+    try {
+      const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/steam_deck_export/`, {
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error(`steam_deck_export failed with status ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `job_${jobId}_steam_deck.webm`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Steam Deck export failed", err);
+      setSteamDeckError(true);
+    } finally {
+      setSteamDeckExporting(false);
+    }
   }
 
   const directorMembership = jobMemberships.data?.find((m) => m.job_id === jobId);
@@ -240,6 +273,16 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
                   <span aria-hidden="true">⬇</span> Download
                 </a>
               )}
+              {job.data.content_type === "video" && job.data.video_url && (
+                <button
+                  type="button"
+                  onClick={() => void handleSteamDeckExport()}
+                  disabled={steamDeckExporting}
+                  title="Converts to the 1280x800 VP9+Opus WebM format Steam Deck's custom startup video needs -- can take a while, VP9 encoding is slow."
+                >
+                  <span aria-hidden="true">🎮</span> {steamDeckExporting ? "Converting…" : "Steam Deck video"}
+                </button>
+              )}
               <button type="button" onClick={() => onRedo(job.data)}>
                 <span aria-hidden="true">↻</span> Redo
               </button>
@@ -301,6 +344,7 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
             {deleteJob.isError && <p className="error">Couldn't delete that job. Try again.</p>}
             {cancelJob.isError && <p className="error">Couldn't cancel that job. Try again.</p>}
             {createProjectFromJob.isError && <p className="error">Couldn't create a project from this job. Try again.</p>}
+            {steamDeckError && <p className="error">Couldn't convert this video. Try again.</p>}
           </>
         )}
       </div>

@@ -505,7 +505,10 @@ ones I invite"):
   URL also takes `DELETE`
   (409 while `processing` — `_execute_job()` is actively mutating that row —
   otherwise removes the job's reference/video files from disk and the row
-  itself, `204` on success). `POST /api/jobs/{id}/cancel/` handles the
+  itself, `204` on success). `GET /api/jobs/{id}/steam_deck_export/`
+   streams the job's video re-encoded as a Steam Deck start video (see
+   `media_post.py` above) as `video/webm` attachment bytes. `POST
+   /api/jobs/{id}/cancel/` handles the
   `processing` case `DELETE` refuses: a `queued` job is cancelled directly
   (409 if it's already terminal); a `processing` job instead sets
   `cancel_requested` and best-effort tells ComfyUI to stop
@@ -563,7 +566,15 @@ ones I invite"):
   image/audio modes: pulls a still frame or the audio track out of the
   video `tasks.py` actually rendered, since those modes submit the same
   t2v/r2v graph rather than having workflows of their own (see the
-  top-level README's "Updating the ComfyUI workflows" section).
+  top-level README's "Updating the ComfyUI workflows" section). Also
+  `to_steam_deck_webm()`: transcodes an already-rendered video to exactly
+  1280x800 VP9+Opus WebM (scaled + letterboxed, never cropped) — the
+  format Steam Deck's custom startup-movie replacement needs — backing
+  `api.py::steam_deck_export()` (`GET /api/jobs/{id}/steam_deck_export/`,
+  JobModal's "Steam Deck video" button). VP9 is CPU-encoded (`libvpx-vp9`)
+  because this container has no hardware encoder, so it's deliberately
+  run on request with its own longer timeout
+  (`STEAM_DECK_EXPORT_TIMEOUT`) rather than pre-made at render time.
 - `hooks.py` — optional site-specific hook mechanism: `PRE_LLM_HOOK`/
   `POST_LLM_HOOK`/`PRE_RENDER_HOOK`/`POST_RENDER_HOOK` settings, each a
   Python dotted path to a callable, wired into `llm.py`/`tasks.py` around

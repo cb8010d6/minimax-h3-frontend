@@ -26,7 +26,7 @@ class FfmpegError(RuntimeError):
     pass
 
 
-def _run_ffmpeg(args: list[str], input_bytes: bytes, output_suffix: str) -> bytes:
+def _run_ffmpeg(args: list[str], input_bytes: bytes, output_suffix: str, *, timeout: int = FFMPEG_TIMEOUT) -> bytes:
     with tempfile.TemporaryDirectory() as tmp:
         in_path = Path(tmp) / "input.mp4"
         out_path = Path(tmp) / f"output{output_suffix}"
@@ -35,10 +35,10 @@ def _run_ffmpeg(args: list[str], input_bytes: bytes, output_suffix: str) -> byte
             result = subprocess.run(
                 ["ffmpeg", "-y", "-i", str(in_path), *args, str(out_path)],
                 capture_output=True,
-                timeout=FFMPEG_TIMEOUT,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            raise FfmpegError(f"ffmpeg timed out after {FFMPEG_TIMEOUT}s") from exc
+            raise FfmpegError(f"ffmpeg timed out after {timeout}s") from exc
         if result.returncode != 0 or not out_path.exists():
             raise FfmpegError(f"ffmpeg failed: {result.stderr.decode(errors='replace')[-2000:]}")
         return out_path.read_bytes()
@@ -101,4 +101,50 @@ def extract_thumbnail(video_bytes: bytes, max_width: int = 320) -> bytes:
     poster image."""
     return _run_ffmpeg(
         ["-frames:v", "1", "-update", "1", "-vf", f"scale={max_width}:-1"], video_bytes, ".png"
+    )
+
+
+# Required container/codec/resolution for Steam Deck's custom startup-movie
+# replacement (community-documented convention -- swap the .webm file SteamOS
+# plays on boot -- not an official Valve API). See generation/api.py's
+# steam_deck_export view.
+STEAM_DECK_WIDTH = 1280
+STEAM_DECK_HEIGHT = 800
+# VP9 CPU encoding (libvpx-vp9 is the only encoder available here -- see
+# to_steam_deck_webm()'s docstring) is much slower than the other ffmpeg
+# calls in this module, which just decode/mux rather than re-encode.
+STEAM_DECK_EXPORT_TIMEOUT = 180
+
+
+def to_steam_deck_webm(video_bytes: bytes) -> bytes:
+    """Transcodes an already-rendered video into a Steam Deck-compatible
+    start video: exactly 1280x800 (scaled down + letterboxed, not cropped,
+    since a job's actual render resolution only ever approximates that --
+    see resolution.py's "8:5" aspect ratio entry), VP9 video + Opus audio in
+    a WebM container.
+
+    Always libvpx-vp9 on the CPU -- this container has no hardware encoder
+    (see backend/Dockerfile; this app's only GPU work happens on the
+    separate ComfyUI machine, never here), and VP9 is also the only codec
+    that would ever support the alpha/transparent variant of this format
+    (yuva420p, libvpx-only) -- not implemented here since this app's
+    renders are always opaque to begin with.
+    """
+    return _run_ffmpeg(
+        [
+            "-vf",
+            f"scale={STEAM_DECK_WIDTH}:{STEAM_DECK_HEIGHT}:force_original_aspect_ratio=decrease,"
+            f"pad={STEAM_DECK_WIDTH}:{STEAM_DECK_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p",
+            "-c:v", "libvpx-vp9",
+            "-b:v", "0",
+            "-crf", "32",
+            "-deadline", "good",
+            "-cpu-used", "2",
+            "-row-mt", "1",
+            "-c:a", "libopus",
+            "-b:a", "128k",
+        ],
+        video_bytes,
+        ".webm",
+        timeout=STEAM_DECK_EXPORT_TIMEOUT,
     )
