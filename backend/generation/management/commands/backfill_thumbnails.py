@@ -36,9 +36,18 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # .only() is load-bearing, not an optimization: this command is also
+        # invoked from the 0021 data migration (0021_backfill_video_thumbnails),
+        # which runs mid-chain against a schema that may predate fields the
+        # *current* model has (is_favorite, use_turbo, ...). The default
+        # full-model SELECT would reference those not-yet-existing columns,
+        # abort the migration's Postgres transaction, and take the whole
+        # migrate run down with it (see that migration's docstring). Selecting
+        # only the columns this command actually reads/writes keeps the query
+        # valid at every point in the chain.
         jobs = GenerationJob.objects.filter(
             status=GenerationJob.Status.DONE, mode__in=_VIDEO_MODES, thumbnail_file=""
-        ).exclude(video_file="")
+        ).exclude(video_file="").only("id", "status", "mode", "video_file", "thumbnail_file")
 
         if not jobs:
             self.stdout.write("Nothing to backfill -- every eligible job already has a thumbnail.")
