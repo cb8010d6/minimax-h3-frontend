@@ -369,6 +369,13 @@ select {
   min-width: 0;
 }
 
+/* Generate/Queue view switcher (see App.tsx's MainLayout) -- hidden above
+   the 900px column-stack breakpoint, where both panes always show side by
+   side and switching is meaningless. */
+.mobile-view-switcher {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .app-layout {
     flex-direction: column;
@@ -391,6 +398,31 @@ select {
     padding-top: 24px;
     position: static;
     max-height: none;
+  }
+
+  .mobile-view-switcher {
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    margin: 0 0 16px;
+    border-radius: 12px;
+    background: var(--code-bg);
+  }
+
+  .mobile-view-switcher .tab {
+    flex: 1 1 0;
+  }
+
+  /* .queue-sidebar used to always render after the whole Generate form in
+     document order -- checking on a render meant scrolling past the entire
+     form first. Below this breakpoint only one pane shows at a time,
+     picked by the switcher above (default: Generate, same as before). */
+  .app-layout.mobile-view-generate .queue-sidebar {
+    display: none;
+  }
+
+  .app-layout.mobile-view-queue .generate-screen {
+    display: none;
   }
 }
 
