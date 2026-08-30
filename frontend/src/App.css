@@ -439,7 +439,11 @@ select {
   .app-layout.mobile-view-queue .queue-sidebar {
     position: sticky;
     top: calc(var(--nav-height) + 8px);
-    max-height: calc(100dvh - var(--nav-height) - 90px);
+    /* height (not max-height): this should occupy that vertical space
+       outright, not just cap itself once content happens to overflow it --
+       a short list should still visually fill the device down to the
+       bottom, not leave blank space below a short box. */
+    height: calc(100dvh - var(--nav-height) - 90px);
     overflow-y: auto;
   }
 }
