@@ -1,6 +1,7 @@
 import type { Clip } from "../../api/directorTypes";
 import { MODE_LABELS } from "../../api/types";
 import { JobProgressBar } from "../queue/JobProgressBar";
+import { ChevronRightIcon } from "../shared/Icon";
 
 function statusClass(clip: Clip): string {
   if (clip.current_job_status === "queued" || clip.current_job_status === "processing") return "clip-box-active";
@@ -35,10 +36,10 @@ export function ClipBox({ clip, isFirst, isLast, onOpen, onMoveUp, onMoveDown }:
           <span className="clip-box-order">#{clip.order + 1}</span>
           <div className="clip-box-move-buttons">
             <button type="button" disabled={isFirst} onClick={onMoveUp} aria-label="Move earlier" title="Move earlier">
-              ◀
+              <ChevronRightIcon size={11} style={{ transform: "rotate(180deg)" }} />
             </button>
             <button type="button" disabled={isLast} onClick={onMoveDown} aria-label="Move later" title="Move later">
-              ▶
+              <ChevronRightIcon size={11} />
             </button>
           </div>
         </div>
@@ -54,7 +55,13 @@ export function ClipBox({ clip, isFirst, isLast, onOpen, onMoveUp, onMoveDown }:
         <button type="button" className="clip-box-body" onClick={onOpen}>
           <span className="clip-box-mode">{MODE_LABELS[clip.mode]}</span>
           <span className="clip-box-prompt">{clip.prompt || <em>No prompt yet</em>}</span>
-          <span className={`clip-box-status clip-box-status-${statusClass(clip)}`}>{statusLabel(clip)}</span>
+          {/* statusClass() already returns a full "clip-box-*" class name (used
+              directly on the card above) -- strip that prefix here so the pill
+              gets "clip-box-status-dirty" etc., not the doubled-up
+              "clip-box-status-clip-box-dirty" this used to produce. */}
+          <span className={`clip-box-status clip-box-status-${statusClass(clip).replace("clip-box-", "")}`}>
+            {statusLabel(clip)}
+          </span>
           {clip.current_job_status === "processing" && (
             <JobProgressBar job={{ phase: clip.phase ?? "", progress_current: clip.progress_current, progress_total: clip.progress_total }} />
           )}

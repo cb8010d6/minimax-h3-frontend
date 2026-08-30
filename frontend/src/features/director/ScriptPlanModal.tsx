@@ -10,6 +10,7 @@ import { useCreateJob, useJob, usePresets } from "../../api/queries";
 import type { PlannedScene, ProjectResource, ReferenceCandidate } from "../../api/directorTypes";
 import { MODE_LABELS } from "../../api/types";
 import type { RenderPreset } from "../../api/types";
+import { CloseIcon } from "../shared/Icon";
 
 interface ScriptPlanModalProps {
   projectId: number;
@@ -248,7 +249,7 @@ export function ScriptPlanModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
         <h2>Generate from script</h2>
 

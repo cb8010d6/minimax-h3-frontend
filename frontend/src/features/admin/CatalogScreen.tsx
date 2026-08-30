@@ -15,6 +15,7 @@ import type {
   Mode,
   QualityCatalog,
 } from "../../api/types";
+import { CloseIcon } from "../shared/Icon";
 
 function modeKeys(level: CatalogLevel): Mode[] {
   return Object.keys(level.modes) as Mode[];
@@ -890,7 +891,7 @@ function EstimateModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
         <h2>Estimate durations: {mode}</h2>
         {isPending && !result && <p className="hint">Fitting a curve to completed jobs…</p>}

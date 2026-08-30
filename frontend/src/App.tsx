@@ -7,6 +7,7 @@ import { LoginScreen } from "./features/auth";
 import { ProjectBoard, ProjectListScreen } from "./features/director";
 import { GenerateScreen } from "./features/generate";
 import { JobModal, QueueSidebar } from "./features/queue";
+import { LogOutIcon } from "./features/shared/Icon";
 import "./App.css";
 
 function MainLayout() {
@@ -57,7 +58,12 @@ function App() {
   return (
     <>
       <nav className="app-nav">
-        <span className="app-title">Minimax H3 Generator</span>
+        <div className="app-brand">
+          <span className="app-mark" aria-hidden="true">
+            M3
+          </span>
+          <span className="app-title">Minimax H3</span>
+        </div>
         <div className="app-nav-links">
           <NavLink to="/" end>
             Generate
@@ -66,7 +72,13 @@ function App() {
           {me.data.is_staff && <NavLink to="/manage">Admin</NavLink>}
         </div>
         <span className="app-user">
-          {me.data.username} · <a href="/accounts/logout/">Log out</a>
+          <span className="app-user-avatar" aria-hidden="true">
+            {(me.data.username ?? "?").slice(0, 1).toUpperCase()}
+          </span>
+          {me.data.username}
+          <a className="app-logout" href="/accounts/logout/" title="Log out" aria-label="Log out">
+            <LogOutIcon size={16} />
+          </a>
         </span>
       </nav>
       <main>
