@@ -437,12 +437,26 @@ select {
      a few px of slack just means a little extra page scroll, not a sidebar
      that overflows past the bottom of the screen. */
   .app-layout.mobile-view-queue .queue-sidebar {
+    /* Overrides .queue-sidebar's own "flex: 1 1 auto" above -- flex-basis:
+       auto on a flex item resolves to that item's own height property, so
+       leaving flex-grow/shrink active here left the explicit height below
+       fighting the flex algorithm instead of governing outright. */
+    flex: none;
+    box-sizing: border-box;
+    background: var(--bg);
+    border-radius: 14px 14px 0 0;
+    border-top: none;
+    padding: 16px 16px 16px;
     position: sticky;
     top: calc(var(--nav-height) + 8px);
     /* height (not max-height): this should occupy that vertical space
        outright, not just cap itself once content happens to overflow it --
        a short list should still visually fill the device down to the
-       bottom, not leave blank space below a short box. */
+       bottom, not leave blank space below a short box. Declared twice: a
+       vh fallback first, then the dvh version -- a browser that doesn't
+       understand dvh drops that whole second declaration as invalid and
+       keeps the first, rather than losing height entirely. */
+    height: calc(100vh - var(--nav-height) - 90px);
     height: calc(100dvh - var(--nav-height) - 90px);
     overflow-y: auto;
   }
