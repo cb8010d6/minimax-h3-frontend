@@ -331,7 +331,6 @@ input[type="text"],
 input[type="number"],
 select {
   font: inherit;
-  width: 100%;
   box-sizing: border-box;
   padding: 8px 11px;
   border-radius: 8px;
@@ -339,6 +338,20 @@ select {
   background: var(--bg);
   color: var(--text-h);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* width:100% is only right for these three -- NOT input[type="number"]
+   above (kept separate on purpose): a bare, high-specificity
+   `input[type="number"] { width: 100% }` would beat every narrower
+   number-input class throughout the app (catalog MP/steps/estimate
+   fields, the re-queue count, scene duration, etc. -- all plain class
+   selectors, which lose a specificity tie against an element+attribute
+   selector) and silently blow their widths back out to 100% of their
+   container regardless of what those classes ask for. */
+textarea,
+input[type="text"],
+select {
+  width: 100%;
 }
 
 /* Persistent two-pane layout: Generate (center) + Queue (right sidebar) */
@@ -1900,7 +1913,13 @@ select {
   background: var(--social-bg);
 }
 
-.catalog-label-input {
+/* input.catalog-label-input (not just .catalog-label-input): a bare class
+   selector loses a specificity tie against the global `input[type="text"]
+   { width: 100% }` rule (an element+attribute selector), which was
+   silently stretching this back out to its <td>'s full width regardless
+   of the 220px below -- qualifying with the element bumps this to the
+   same specificity tier, and source order (this comes later) wins the tie. */
+input.catalog-label-input {
   font-weight: 600;
   font-size: 15px;
   border: 1px solid transparent;
