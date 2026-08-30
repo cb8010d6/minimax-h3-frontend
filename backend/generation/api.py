@@ -23,7 +23,8 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -43,6 +44,7 @@ from .models import (
     CONTENT_TYPE_BY_MODE,
     ContentType,
     GenerationJob,
+    JobFolder,
     Mode,
     PromptChatMessage,
     PromptChatSession,
@@ -257,6 +259,30 @@ class ReferenceAssetSerializer(serializers.Serializer):
     url = serializers.CharField(allow_null=True)
 
 
+class FolderRefSerializer(serializers.Serializer):
+    """Minimal (id, name) shape nested onto a job -- see
+    GenerationJobSerializer.folders. Distinct from FolderSerializer below,
+    which is the full shape returned by GET/POST /api/folders/ (adds
+    job_count, meaningless to nest onto every job in a list)."""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
+class FolderSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField(max_length=100)
+    job_count = serializers.IntegerField(help_text="How many of this user's jobs are currently in this folder.")
+
+
+class CreateFolderRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=100)
+
+
+class UpdateFolderRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=100)
+
+
 class CreateJobRequestSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(choices=Mode.choices)
     duration_id = serializers.IntegerField(
@@ -303,6 +329,13 @@ class CreateJobRequestSerializer(serializers.Serializer):
         "toggle) -- see extras.md#turbo. When set, overrides this job's sampler steps to "
         "turbo_steps_t2v_i2v/turbo_steps_r2v regardless of the chosen preset's own steps.",
     )
+    folder_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="Folders (see JobFolder) to file this job under immediately at creation time -- "
+        "every id must be one of the requesting user's own folders. Sent as repeated multipart "
+        "fields (this is a multipart request, like reference_images), not a JSON array.",
+    )
 
 
 class GenerationJobSerializer(serializers.Serializer):
@@ -335,6 +368,11 @@ class GenerationJobSerializer(serializers.Serializer):
     is_archived = serializers.BooleanField(
         help_text="Hides this job from the default queue/history view -- see PATCH below. The "
         "list endpoint always returns every job regardless; filtering is client-side."
+    )
+    folders = FolderRefSerializer(
+        many=True,
+        help_text="Organizational tags this job currently belongs to -- see PATCH below "
+        "(folder_ids) to change membership. A job may be in any number of folders.",
     )
     preset_id = serializers.IntegerField()
     preset_label = serializers.CharField(
@@ -401,6 +439,12 @@ class UpdateJobRequestSerializer(serializers.Serializer):
     )
     is_favorite = serializers.BooleanField(required=False)
     is_archived = serializers.BooleanField(required=False)
+    folder_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="Full replacement of this job's folder membership (every id must be one of "
+        "the requesting user's own JobFolders) -- an empty list removes it from every folder.",
+    )
 
 
 @extend_schema(
@@ -769,6 +813,7 @@ def _serialize_job(
         "title": job.title,
         "is_favorite": job.is_favorite,
         "is_archived": job.is_archived,
+        "folders": [{"id": f.id, "name": f.name} for f in job.folders.all()],
         "preset_id": job.preset_id,
         "preset_label": job.preset.label,
         "duration_id": job.duration_id,
@@ -876,7 +921,7 @@ def jobs(request):
         queryset = (
             GenerationJob.objects.filter(user=request.user)
             .select_related("preset", "duration")
-            .prefetch_related("references")
+            .prefetch_related("references", "folders")
         )
         finish_times = expected_finish_times()
         return Response(
@@ -975,6 +1020,19 @@ def jobs(request):
             and str(m.get("content", "")).strip()
         ]
 
+    folder_ids_raw = request.data.getlist("folder_ids")
+    folder_ids: list[int] = []
+    if folder_ids_raw:
+        try:
+            folder_ids = [int(v) for v in folder_ids_raw]
+        except (TypeError, ValueError):
+            return Response({"error": "folder_ids must be integers."}, status=400)
+        owned_ids = set(
+            JobFolder.objects.filter(user=request.user, id__in=folder_ids).values_list("id", flat=True)
+        )
+        if owned_ids != set(folder_ids):
+            return Response({"error": "folder_ids must reference your own folders."}, status=400)
+
     width, height = compute_resolution(preset.megapixels, aspect_ratio)
 
     # Turbo is only useful at (or near) the step count its LoRA was trained
@@ -1003,6 +1061,8 @@ def jobs(request):
             use_spectrum=use_spectrum,
             use_turbo=use_turbo,
         )
+        if folder_ids:
+            job.folders.set(folder_ids)
         for order, file in enumerate(reference_images):
             ReferenceAsset.objects.create(
                 job=job, kind=ReferenceAsset.Kind.IMAGE, order=order, file=file
@@ -1061,10 +1121,10 @@ def jobs(request):
 )
 @extend_schema(
     methods=["PATCH"],
-    summary="Rename, favorite, or archive a generation job",
-    description="Only touches title/is_favorite/is_archived -- every other field is set at "
-    "creation time and never editable. Any subset of the three may be sent; at least one is "
-    "required. Only the owning user can edit their own job (404 otherwise).",
+    summary="Rename, favorite, archive, or re-tag a generation job",
+    description="Only touches title/is_favorite/is_archived/folder_ids -- every other field is "
+    "set at creation time and never editable. Any subset may be sent; at least one is required. "
+    "Only the owning user can edit their own job (404 otherwise).",
     request=UpdateJobRequestSerializer,
     responses={200: GenerationJobDetailSerializer, 400: ErrorResponseSerializer, 404: OpenApiResponse(description="Not found.")},
     tags=["generation"],
@@ -1072,7 +1132,7 @@ def jobs(request):
 @api_view(["GET", "DELETE", "PATCH"])
 def job_detail(request, job_id: int):
     job = get_object_or_404(
-        GenerationJob.objects.select_related("preset", "duration").prefetch_related("references"),
+        GenerationJob.objects.select_related("preset", "duration").prefetch_related("references", "folders"),
         id=job_id,
         user=request.user,
     )
@@ -1105,13 +1165,113 @@ def job_detail(request, job_id: int):
         if "is_archived" in request.data:
             job.is_archived = str(request.data.get("is_archived")).lower() in ("1", "true", "yes", "on")
             update_fields.append("is_archived")
-        if not update_fields:
-            return Response({"error": "title, is_favorite, or is_archived is required."}, status=400)
-        job.save(update_fields=update_fields)
+        folder_ids_provided = "folder_ids" in request.data
+        if folder_ids_provided:
+            folder_ids = request.data.get("folder_ids")
+            if not isinstance(folder_ids, list) or not all(isinstance(f, int) for f in folder_ids):
+                return Response({"error": "folder_ids must be a list of integers."}, status=400)
+            owned_ids = set(
+                JobFolder.objects.filter(user=request.user, id__in=folder_ids).values_list("id", flat=True)
+            )
+            if owned_ids != set(folder_ids):
+                return Response({"error": "folder_ids must reference your own folders."}, status=400)
+        if not update_fields and not folder_ids_provided:
+            return Response(
+                {"error": "title, is_favorite, is_archived, or folder_ids is required."}, status=400
+            )
+        if update_fields:
+            job.save(update_fields=update_fields)
+        if folder_ids_provided:
+            job.folders.set(folder_ids)
         return Response(_serialize_job(job, detail=True))
 
     finish_time = expected_finish_times().get(job.id)
     return Response(_serialize_job(job, detail=True, expected_finish_time=finish_time))
+
+
+def _serialize_folder(folder: JobFolder) -> dict:
+    return {"id": folder.id, "name": folder.name, "job_count": folder.job_count}
+
+
+def _validate_folder_name(request) -> str | Response:
+    name = request.data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return Response({"error": "name is required."}, status=400)
+    name = name.strip()
+    if len(name) > 100:
+        return Response({"error": "name must be at most 100 characters."}, status=400)
+    return name
+
+
+@extend_schema(
+    summary="List or create job folders",
+    description=(
+        "GET lists only the requesting user's own folders (organizational tags for "
+        "GenerationJob, see generation/models.py's JobFolder), each with how many of their "
+        "jobs are currently in it. POST creates a new one -- names are unique per user (400 "
+        "if one with that name already exists)."
+    ),
+    request=CreateFolderRequestSerializer,
+    responses={
+        200: FolderSerializer(many=True),
+        201: FolderSerializer,
+        400: ErrorResponseSerializer,
+    },
+    tags=["generation"],
+)
+@api_view(["GET", "POST"])
+def folders(request):
+    if request.method == "GET":
+        queryset = JobFolder.objects.filter(user=request.user).annotate(job_count=Count("jobs", distinct=True))
+        return Response([_serialize_folder(f) for f in queryset])
+
+    name = _validate_folder_name(request)
+    if isinstance(name, Response):
+        return name
+    try:
+        folder = JobFolder.objects.create(user=request.user, name=name)
+    except IntegrityError:
+        return Response({"error": "A folder with that name already exists."}, status=400)
+    folder.job_count = 0
+    return Response(_serialize_folder(folder), status=201)
+
+
+@extend_schema(
+    methods=["PATCH"],
+    summary="Rename a job folder",
+    request=UpdateFolderRequestSerializer,
+    responses={
+        200: FolderSerializer,
+        400: ErrorResponseSerializer,
+        404: OpenApiResponse(description="Not found."),
+    },
+    tags=["generation"],
+)
+@extend_schema(
+    methods=["DELETE"],
+    summary="Delete a job folder",
+    description="Jobs currently in this folder are untagged from it, not deleted themselves.",
+    responses={204: OpenApiResponse(description="Deleted."), 404: OpenApiResponse(description="Not found.")},
+    tags=["generation"],
+)
+@api_view(["PATCH", "DELETE"])
+def folder_detail(request, folder_id: int):
+    folder = get_object_or_404(JobFolder, id=folder_id, user=request.user)
+
+    if request.method == "DELETE":
+        folder.delete()
+        return Response(status=204)
+
+    name = _validate_folder_name(request)
+    if isinstance(name, Response):
+        return name
+    folder.name = name
+    try:
+        folder.save(update_fields=["name"])
+    except IntegrityError:
+        return Response({"error": "A folder with that name already exists."}, status=400)
+    folder.job_count = folder.jobs.count()
+    return Response(_serialize_folder(folder))
 
 
 @extend_schema(

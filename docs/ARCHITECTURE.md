@@ -392,6 +392,19 @@ ones I invite"):
   all of this — `cancel_job()` flips it straight to `cancelled` under the
   same `select_for_update()` locking `_claim_next_job()` uses, since it
   never reached ComfyUI in the first place.
+- `JobFolder` — a user-defined organizational tag (`name`, unique per user),
+  many-to-many with `GenerationJob` via `folders` — a job can be in any
+  number of folders at once (owner request: dozens of slight prompt variants
+  around one concept are hard to track in a flat queue list). Purely a
+  display/filter aid, no effect on rendering. `GET/POST /api/folders/` and
+  `PATCH/DELETE /api/folders/{id}/` manage folders themselves;
+  `PATCH /api/jobs/{id}/` accepts `folder_ids` (full replacement of a job's
+  membership). Deliberately separate from Director's `Project`
+  (`director/models.py`), which is a render-chain/timeline concept, not an
+  organizational label — see that model's own layering note. The frontend
+  (`QueueSidebar.tsx`) groups the queue list into collapsible per-folder
+  sections when the user has any folders and no single folder is filtered
+  to, falling back to the plain flat list otherwise.
 - `ReferenceAsset` — image/video/audio attachments on a job, with a computed
   `label` (`"Picture 1"`, `"Video 1"`, `"Audio 1"`) matching the
   `<Picture N>`/`<Video N>`/`<Audio N>` convention in

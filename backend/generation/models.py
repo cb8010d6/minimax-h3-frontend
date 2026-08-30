@@ -88,6 +88,35 @@ CONTENT_TYPE_BY_MODE: dict[str, str] = {
 REFERENCE_FLOW_MODES = {Mode.REFERENCE_TO_VIDEO, Mode.REFERENCE_TO_IMAGE, Mode.REFERENCE_TO_AUDIO}
 
 
+class JobFolder(models.Model):
+    """A user-defined organizational tag for GenerationJobs -- lets someone
+    who queues dozens of slight prompt variants around the same concept
+    group them together (e.g. "Alice walk-cycle", "Rooftop chase") without
+    it meaning anything to rendering itself. Deliberately many-to-many (see
+    GenerationJob.folders) rather than a single parent FK -- a job can be
+    relevant to more than one grouping at once.
+
+    Distinct from director.models.Project, which is a render-chain/timeline
+    concept (an ordered sequence of Clips with shared render settings) --
+    this is a pure organizational label, scoped to this app so `director`
+    keeps its one-way dependency on `generation` (see director/models.py's
+    own module docstring).
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="job_folders")
+    name = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "name"], name="unique_user_folder_name")
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class RenderPreset(models.Model):
     """Admin-editable (mode, megapixels, steps) "quality tier" -- the first of
     two axes that together determine render time (the other is
@@ -208,6 +237,13 @@ class GenerationJob(models.Model):
         "see generation/api.py's PATCH job_detail. The frontend filters this client-side (the "
         "list endpoint always returns every job, archived or not), same as its other queue "
         "filters.",
+    )
+    folders = models.ManyToManyField(
+        JobFolder,
+        blank=True,
+        related_name="jobs",
+        help_text="User-organizational tags (see JobFolder) -- purely a display/filter aid, no "
+        "effect on rendering. A job may belong to any number of folders at once.",
     )
 
     # Snapshotted at creation from preset/duration/aspect_ratio (see
