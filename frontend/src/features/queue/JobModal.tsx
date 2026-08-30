@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE_URL } from "../../api/client";
-import { useCancelJob, useDeleteJob, useJob, useUpdateJob } from "../../api/queries";
+import { useCancelJob, useDeleteJob, useJob, useRequeueJob, useUpdateJob } from "../../api/queries";
 import { useCreateProjectFromJob, useJobMemberships } from "../../api/directorQueries";
 import { MODE_LABELS, type GenerationJobDetail } from "../../api/types";
 import { displayTitle } from "./jobTitle";
@@ -49,16 +49,23 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
   const updateJob = useUpdateJob();
   const jobMemberships = useJobMemberships();
   const createProjectFromJob = useCreateProjectFromJob();
+  const requeueJob = useRequeueJob();
   const [showAiPrompt, setShowAiPrompt] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [steamDeckExporting, setSteamDeckExporting] = useState(false);
   const [steamDeckError, setSteamDeckError] = useState(false);
-  // "⋯ More" submenu (Steam Deck export / Create Director project) -- see
-  // its usage in modal-actions below.
+  // "⋯ More" submenu (Re-queue / Steam Deck export / Create Director
+  // project) -- see its usage in modal-actions below.
   const [moreOpen, setMoreOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  // "Re-queue" dialog (opened from the More menu): how many identical
+  // copies of this job to queue, as a string so the <input type="number">
+  // can hold whatever the user typed (including empty) while editing.
+  const [requeueOpen, setRequeueOpen] = useState(false);
+  const [requeueCount, setRequeueCount] = useState("1");
+  const [requeueError, setRequeueError] = useState(false);
 
   // Reset per-job UI state in case this modal instance is reused for a
   // different job rather than remounted (e.g. clicking straight from one
@@ -69,6 +76,9 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
     setSteamDeckExporting(false);
     setSteamDeckError(false);
     setMoreOpen(false);
+    setRequeueOpen(false);
+    setRequeueCount("1");
+    setRequeueError(false);
   }, [jobId]);
 
   // The submenu is a plain <div>, not a <dialog>, so outside-click and
@@ -93,6 +103,18 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
     };
   }, [moreOpen]);
 
+  // The re-queue dialog is a nested .modal-overlay, not a <dialog>, so
+  // Escape closing isn't automatic either (outside-click is handled by the
+  // overlay's own onClick).
+  useEffect(() => {
+    if (!requeueOpen) return;
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") setRequeueOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [requeueOpen]);
+
   async function handleDelete() {
     await deleteJob.mutateAsync(jobId);
     onClose();
@@ -100,6 +122,20 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
 
   async function handleCancel() {
     await cancelJob.mutateAsync(jobId);
+  }
+
+  async function handleRequeue() {
+    const count = Number(requeueCount);
+    if (!Number.isInteger(count) || count < 1 || count > 10) return;
+    setRequeueError(false);
+    try {
+      await requeueJob.mutateAsync({ jobId, count });
+      setRequeueOpen(false);
+    } catch {
+      // mutateAsync throws on non-2xx (see client.ts) -- show the inline
+      // error and keep the dialog open so the count is preserved.
+      setRequeueError(true);
+    }
   }
 
   async function handleCreateProject() {
@@ -143,11 +179,16 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
   // generation/models.py's CONTENT_TYPE_BY_MODE.
   const canCreateDirectorProject =
     job.data?.content_type === "video" && job.data.status === "done" && !!job.data.video_url;
-  // Which items the "⋯ More" submenu below offers -- the trigger itself is
-  // hidden when neither qualifies, so the action row never shows an empty
-  // menu.
+  // Which items the "⋯ More" submenu below offers. Re-queue is ALWAYS
+  // offered (any job, in any state, can be re-rendered), so the trigger is
+  // always visible; the other two only appear when they qualify.
   const showSteamDeckItem = job.data?.content_type === "video" && !!job.data.video_url;
   const showDirectorItem = canCreateDirectorProject && !directorMembership;
+  // 1..10, mirroring the backend's _MAX_REQUEUE_COPIES (see
+  // generation/api.py::requeue_job) -- the input's min/max attributes give
+  // the same bounds for arrow-key/typing, this is the submit-time check.
+  const requeueCountValue = Number(requeueCount);
+  const requeueCountValid = Number.isInteger(requeueCountValue) && requeueCountValue >= 1 && requeueCountValue <= 10;
 
   function startEditingTitle() {
     if (!job.data) return;
@@ -306,59 +347,69 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
                   <span aria-hidden="true">⬇</span> Download
                 </a>
               )}
-              {/* Steam Deck export + Create Director project live in this
-                  "⋯ More" submenu instead of as top-level buttons (owner
-                  request: keep the action row short) -- the trigger only
-                  appears when at least one item qualifies for this job.
+              {/* Re-queue + Steam Deck export + Create Director project
+                  live in this "⋯ More" submenu instead of as top-level
+                  buttons (owner request: keep the action row short).
+                  Re-queue is always offered, so the trigger is always
+                  visible; the other two only appear when they qualify.
                   The menu is a plain <div> (a <button> can't legally
                   contain another <button>), and it opens *upward* because
                   .modal is overflow-y: auto -- a downward menu would run
                   into the modal's scroll edge (see App.css's
                   .modal-more-menu). */}
-              {(showSteamDeckItem || showDirectorItem) && (
-                <div className="modal-more" ref={moreMenuRef}>
-                  <button
-                    type="button"
-                    className="modal-more-trigger"
-                    onClick={() => setMoreOpen((v) => !v)}
-                    aria-expanded={moreOpen}
-                    aria-haspopup="true"
-                    title="Extra actions for this job"
-                  >
-                    <span aria-hidden="true">⋯</span> More
-                  </button>
-                  {moreOpen && (
-                    <div className="modal-more-menu" role="menu">
-                      {showSteamDeckItem && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setMoreOpen(false);
-                            void handleSteamDeckExport();
-                          }}
-                          disabled={steamDeckExporting}
-                          title="Converts to the 1280x800 VP9+Opus WebM format Steam Deck's custom startup video needs -- can take a while, VP9 encoding is slow."
-                        >
-                          <span aria-hidden="true">🎮</span>{" "}
-                          {steamDeckExporting ? "Converting…" : "Steam Deck video"}
-                        </button>
-                      )}
-                      {showDirectorItem && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => void handleCreateProject()}
-                          disabled={createProjectFromJob.isPending}
-                          title="Starts a new Director project with this already-rendered clip as its first scene -- no re-render needed."
-                        >
-                          {createProjectFromJob.isPending ? "Creating…" : "Create Director project"}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="modal-more" ref={moreMenuRef}>
+                <button
+                  type="button"
+                  className="modal-more-trigger"
+                  onClick={() => setMoreOpen((v) => !v)}
+                  aria-expanded={moreOpen}
+                  aria-haspopup="true"
+                  title="Extra actions for this job"
+                >
+                  <span aria-hidden="true">⋯</span> More
+                </button>
+                {moreOpen && (
+                  <div className="modal-more-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        setRequeueOpen(true);
+                      }}
+                      title="Queue more identical renders of this job (same prompt, settings, and reference files) -- you'll be asked how many, defaulting to 1."
+                    >
+                      <span aria-hidden="true">🔁</span> Re-queue…
+                    </button>
+                    {showSteamDeckItem && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          void handleSteamDeckExport();
+                        }}
+                        disabled={steamDeckExporting}
+                        title="Converts to the 1280x800 VP9+Opus WebM format Steam Deck's custom startup video needs -- can take a while, VP9 encoding is slow."
+                      >
+                        <span aria-hidden="true">🎮</span>{" "}
+                        {steamDeckExporting ? "Converting…" : "Steam Deck video"}
+                      </button>
+                    )}
+                    {showDirectorItem && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => void handleCreateProject()}
+                        disabled={createProjectFromJob.isPending}
+                        title="Starts a new Director project with this already-rendered clip as its first scene -- no re-render needed."
+                      >
+                        {createProjectFromJob.isPending ? "Creating…" : "Create Director project"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
               <button type="button" onClick={() => onRedo(job.data)}>
                 <span aria-hidden="true">↻</span> Redo
               </button>
@@ -411,6 +462,62 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
             {cancelJob.isError && <p className="error">Couldn't cancel that job. Try again.</p>}
             {createProjectFromJob.isError && <p className="error">Couldn't create a project from this job. Try again.</p>}
             {steamDeckError && <p className="error">Couldn't convert this video. Try again.</p>}
+
+            {/* Re-queue dialog: a NESTED .modal-overlay inside this modal's
+                own .modal (not a sibling of the outer overlay). It's
+                position:fixed + inset:0 with the same z-index as the outer
+                overlay but later in the DOM, so it paints on top of the job
+                modal and covers the viewport -- see App.css's .requeue-modal.
+                Kept inside the .modal (rather than as a sibling) because
+                that's what makes the same-z-index stacking work. */}
+            {requeueOpen && (
+              <div className="modal-overlay" onClick={() => setRequeueOpen(false)}>
+                <div
+                  className="modal requeue-modal"
+                  onClick={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-label="Re-queue this job"
+                >
+                  <h2>Re-queue this job</h2>
+                  <p className="hint">
+                    Queue identical copies of this job -- same prompt, settings, and reference
+                    files. Each copy is a full render in its own right and joins the queue behind
+                    whatever's already in it.
+                  </p>
+                  <label className="requeue-count-label">
+                    How many copies?
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      step={1}
+                      value={requeueCount}
+                      onChange={(e) => setRequeueCount(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleRequeue();
+                      }}
+                      autoFocus
+                    />
+                  </label>
+                  {requeueError && <p className="error">Couldn't re-queue this job. Try again.</p>}
+                  <div className="modal-actions">
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={() => void handleRequeue()}
+                      disabled={requeueJob.isPending || !requeueCountValid}
+                    >
+                      {requeueJob.isPending
+                        ? "Queuing…"
+                        : `Queue ${requeueCountValue} ${requeueCountValue === 1 ? "copy" : "copies"}`}
+                    </button>
+                    <button type="button" onClick={() => setRequeueOpen(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

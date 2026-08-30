@@ -148,6 +148,27 @@ export function useCancelJob() {
   });
 }
 
+// "Re-queue N copies of this job" -- JobModal's More-menu item. The backend
+// (generation/api.py::requeue_job) copies prompt/settings/reference files
+// into N fresh rows and enqueues them in the shared FIFO; the response is
+// the list of those new jobs, but the UI only needs the side effects, so
+// this hook just invalidates the list (the new copies show up there) and
+// the queue estimate (N more renders queued).
+export function useRequeueJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, count }: { jobId: number; count: number }) =>
+      apiFetch<GenerationJobDetail[]>(`/jobs/${jobId}/requeue/`, {
+        method: "POST",
+        body: JSON.stringify({ count }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["queue-estimate"] });
+    },
+  });
+}
+
 // Covers every PATCH-able field on a job (title, is_favorite, is_archived
 // -- see backend generation/api.py's job_detail() PATCH) in one hook,
 // rather than one hook per field: all three are simple independent flips

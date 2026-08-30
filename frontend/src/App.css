@@ -1138,6 +1138,40 @@ select {
   padding: 4px 8px;
 }
 
+/* Re-queue dialog (JobModal's "⋯ More" -> Re-queue): a NESTED .modal-overlay
+   rendered inside the job modal's own .modal. .modal is position:relative
+   with no z-index, so it creates no stacking context -- this overlay's
+   position:fixed + z-index:100 therefore participates in the ROOT stacking
+   context, where it shares z-index with the outer overlay but comes later
+   in the DOM, so it paints on top of the job modal and covers the viewport
+   (fixed positioning is unaffected by .modal's overflow-y: auto, since
+   overflow doesn't change a fixed element's containing block). */
+.requeue-modal {
+  max-width: 440px;
+}
+
+.requeue-count-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: var(--text-h);
+  margin: 0 0 16px;
+}
+
+/* The global input rule above only styles input[type="text"], so the
+   count field gets the same look explicitly. */
+.requeue-count-label input[type="number"] {
+  font: inherit;
+  width: 90px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
 .modal-title-editable {
   cursor: pointer;
   border-radius: 4px;

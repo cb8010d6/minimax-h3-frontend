@@ -523,7 +523,29 @@ ones I invite"):
   yet), then returns immediately with the job still showing `processing`;
   it's `_execute_job()`'s own wait loop, over in `qcluster`, that actually
   writes `cancelled` once ComfyUI's round trip ends — see `GenerationJob`
-  above for why. Every view carries an `@extend_schema`
+  above for why. `POST /api/jobs/{id}/requeue/` queues `count` (default 1,
+  max `api._MAX_REQUEUE_COPIES` = 10, 400 otherwise) fresh `GenerationJob`
+  rows that render exactly what this job rendered: mode/preset/duration,
+  both prompt fields, every snapshotted render value, the same
+  `use_spectrum`/`use_turbo` flags, and physical copies of each
+  `ReferenceAsset` file under new random upload paths (the originals are
+  shared with this job and would be deleted by its `DELETE`, so copies
+  must own their own bytes). Deliberately not copied: title/favorite/
+  archived (a copy is a new job), the prompt-chat audit trail (it belongs
+  to the conversation that drafted *this* job's prompt), and
+  `continuation_params` (Director-only continuity spliced against a
+  previous scene — a standalone re-render must not splice against it;
+  this mirrors the frontend's Redo, which re-submits through `POST
+  /api/jobs/` and carries none of those either). 400 when the job's
+  preset or duration has since been deactivated (the same boundary `POST
+  /api/jobs/` enforces on new creations), 409 when a reference file is
+  missing on disk, 404 for another user's job; `201` with the list of
+  new detail-serialized copies. Each copy is a full render in its own
+  right, so one `async_task("generation.tasks.process_queue")` enqueue
+  covers all of them (redundant enqueues are safe no-ops, see `jobs()`
+  above). Frontend: `JobModal`'s "⋯ More" submenu offers this behind a
+  small dialog asking how many copies, defaulting to 1 (see
+  `features/queue/JobModal.tsx` below). Every view carries an `@extend_schema`
   (drf-spectacular, per-method via `methods=[...]` on `job_detail` since one
   `@api_view` handles both `GET` and `DELETE`) describing its request/response
   shape for the auto-generated API docs — see "API documentation" below.
@@ -982,14 +1004,25 @@ above for how a `processing` cancel actually resolves asynchronously
 server-side), and a **Delete** button (`DELETE /api/jobs/{id}/`, disabled
 with an explanatory `title` while `status === "processing"` — mirroring the
 backend's 409 rather than just discovering it from a failed request). The
-less-frequent extras — the **Steam Deck video** export (see "Media
-post-processing" above) and **Create Director project** (see the Director
-section below) — live in a "⋯ More" submenu in the same action row rather
-than as top-level buttons (direct user request: keep the row short): a
-plain-`<div>` menu (a `<button>` can't legally contain another) that opens
-*upward* because `.modal` is `overflow-y: auto` (a downward menu would hit
-the modal's scroll edge), closes on outside-click or Escape, and whose
-trigger only appears when at least one item qualifies for the job.
+less-frequent extras — **Re-queue**, the **Steam Deck video** export (see
+"Media post-processing" above), and **Create Director project** (see the
+Director section below) — live in a "⋯ More" submenu in the same action
+row rather than as top-level buttons (direct user request: keep the row
+short): a plain-`<div>` menu (a `<button>` can't legally contain another)
+that opens *upward* because `.modal` is `overflow-y: auto` (a downward
+menu would hit the modal's scroll edge) and closes on outside-click or
+Escape. **Re-queue** is always offered (any job, in any state, can be
+re-rendered — see `POST /api/jobs/{id}/requeue/` in "Backend apps" above),
+so the trigger is always visible; the other two only appear when they
+qualify. Picking it opens a small dialog (a *nested* `.modal-overlay`
+inside the modal's own `.modal` — `position:fixed` + the same `z-index`
+as the outer overlay but later in the DOM, so it paints on top of the job
+modal) asking how many identical copies to queue, with a number input
+(min 1, max 10 — mirroring the backend's `_MAX_REQUEUE_COPIES`) defaulting
+to 1, a "Queue N copies" button that shows "Queuing…" while the request is
+in flight, and Escape/outside-click closing it; on success the dialog
+closes and the new copies appear in the queue list (the mutation
+invalidates `["jobs"]` and `["queue-estimate"]`).
 Known gap carried over from before: the list-level `didJobFail()` label is
 frontend-only, still derived from `video_url`'s absence rather than the
 backend's real `error_message` (which the modal *does* show, now that a

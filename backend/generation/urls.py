@@ -12,6 +12,7 @@ urlpatterns = [
     path("jobs/", api.jobs, name="jobs"),
     path("jobs/<int:job_id>/", api.job_detail, name="job_detail"),
     path("jobs/<int:job_id>/cancel/", api.cancel_job, name="cancel_job"),
+    path("jobs/<int:job_id>/requeue/", api.requeue_job, name="job_requeue"),
     path("jobs/<int:job_id>/steam_deck_export/", api.steam_deck_export, name="steam_deck_export"),
     path("quality-catalog/", admin_api.quality_catalog, name="quality_catalog"),
     path("quality-levels/", admin_api.create_quality_level, name="create_quality_level"),

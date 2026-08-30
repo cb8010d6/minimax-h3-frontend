@@ -18,7 +18,9 @@ purely for documentation and aren't used for real validation.
 
 import json
 import logging
+import os
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
@@ -677,6 +679,31 @@ _MAX_REFERENCE_VIDEO = {
     Mode.REFERENCE_TO_AUDIO: 3,
 }
 
+# Max copies one re-queue request may create (see requeue_job()) -- an
+# accidental "10" typed as "100" would otherwise queue a hundred full
+# renders of the same prompt, each with its own copied reference files.
+# 10 covers the realistic case (a few comparison renders of one prompt)
+# while keeping a fat-finger from turning into a queue-day.
+_MAX_REQUEUE_COPIES = 10
+
+
+# Defined HERE (not in the serializer block above) because the class body
+# evaluates max_value=_MAX_REQUEUE_COPIES at import time, and the constant
+# only exists once this point in the module has executed.
+class RequeueJobRequestSerializer(serializers.Serializer):
+    count = serializers.IntegerField(
+        required=False,
+        default=1,
+        min_value=1,
+        max_value=_MAX_REQUEUE_COPIES,
+        help_text=(
+            "How many identical copies of the job to queue (1 = one extra render of the "
+            "same prompt/settings/references). Capped at _MAX_REQUEUE_COPIES -- see its "
+            "comment. The original job is left untouched; copies are fresh rows that "
+            "enter the shared FIFO queue behind whatever is already queued."
+        ),
+    )
+
 
 def _serialize_preset(preset: RenderPreset) -> dict:
     return {
@@ -1142,6 +1169,137 @@ def cancel_job(request, job_id: int):
         comfyui.cancel_prompt(job.comfyui_prompt_id)
 
     return Response(_serialize_job(job, detail=True))
+
+
+@extend_schema(
+    summary="Queue N identical copies of an existing job",
+    description=(
+        "Re-queues `count` (default 1, max _MAX_REQUEUE_COPIES) fresh GenerationJob rows "
+        "that render exactly what this job rendered: same mode/preset/duration, both "
+        "prompt fields, all snapshotted render values (megapixels/steps/aspect_ratio/"
+        "width/height/duration_seconds/estimated_seconds), the same use_spectrum/"
+        "use_turbo flags, and physical copies of every ReferenceAsset file (new random "
+        "upload paths -- the originals are shared with this job and would be deleted by "
+        "its DELETE, so copies must own their own bytes). The original job is left "
+        "untouched. Deliberately NOT copied: title/is_favorite/is_archived (a copy is a "
+        "new job, not a rename of this one), the prompt-chat audit trail (PromptChat"
+        "Session/Message belong to the conversation that drafted *this* job's prompt -- "
+        "duplicating it would fabricate audit history), and continuation_params (Director-"
+        "only motion/audio continuity spliced against a *previous* scene -- a standalone "
+        "re-render must not splice against it; this mirrors the frontend's Redo, which "
+        "re-submits through POST /api/jobs/ and carries none of those either). Refused "
+        "with 400 when the job's preset or duration has since been deactivated (the "
+        "same boundary POST /api/jobs/ enforces on new creations), or 409 when one of "
+        "its reference files is missing on disk (a copy couldn't be complete). Each "
+        "copy is a full render in its own right, so the shared process_queue task is "
+        "enqueued once for all of them (redundant enqueues are safe no-ops, see "
+        "jobs()). Only the owning user can re-queue their own job (404 otherwise). "
+        "Frontend: JobModal's \"⋯ More\" submenu offers this behind a small dialog "
+        "asking how many copies, defaulting to 1."
+    ),
+    request=RequeueJobRequestSerializer,
+    responses={
+        201: GenerationJobDetailSerializer(many=True),
+        400: ErrorResponseSerializer,
+        404: OpenApiResponse(description="Not found."),
+        409: OpenApiResponse(ErrorResponseSerializer, description="Reference file missing on disk."),
+    },
+    tags=["generation"],
+)
+@api_view(["POST"])
+def requeue_job(request, job_id: int):
+    count_raw = request.data.get("count", 1)
+    try:
+        count = int(count_raw)
+    except (TypeError, ValueError):
+        return Response({"error": "count must be an integer."}, status=400)
+    if not 1 <= count <= _MAX_REQUEUE_COPIES:
+        return Response(
+            {"error": f"count must be between 1 and {_MAX_REQUEUE_COPIES}."}, status=400
+        )
+
+    job = get_object_or_404(
+        GenerationJob.objects.select_related("preset", "duration").prefetch_related("references"),
+        id=job_id,
+        user=request.user,
+    )
+    if not job.preset.is_active or not job.duration.is_active:
+        # Same boundary POST /api/jobs/ enforces on a fresh creation: a new row
+        # must point at an active catalog entry. The job's own render values are
+        # all snapshotted, so the copies would render fine either way -- this is
+        # about not minting new rows against a catalog the admin has since
+        # switched off, not about render correctness.
+        return Response(
+            {"error": "This job's quality preset or duration is no longer active, so it can't be re-queued."},
+            status=400,
+        )
+    # A copy must be a complete job, so every reference file must still be on
+    # disk (files are only removed by this job's own DELETE, but a media
+    # volume can lose them out-of-band -- fail clean rather than mint a
+    # half-referenced job that would fail at render time).
+    if any(not ref.file or not os.path.exists(ref.file.path) for ref in job.references.all()):
+        return Response(
+            {
+                "error": (
+                    "One of this job's reference files is missing on the server, so a "
+                    "complete copy can't be made."
+                )
+            },
+            status=409,
+        )
+
+    new_jobs = []
+    with transaction.atomic():
+        for _ in range(count):
+            # Every render-relevant field is copied verbatim -- they're all
+            # creation-time snapshots (see GenerationJob's field help_texts),
+            # so a copy is render-identical to the original by construction.
+            new_job = GenerationJob.objects.create(
+                user=request.user,
+                mode=job.mode,
+                preset=job.preset,
+                duration=job.duration,
+                raw_prompt=job.raw_prompt,
+                improved_prompt=job.improved_prompt,
+                megapixels=job.megapixels,
+                steps=job.steps,
+                aspect_ratio=job.aspect_ratio,
+                width=job.width,
+                height=job.height,
+                duration_seconds=job.duration_seconds,
+                estimated_seconds=job.estimated_seconds,
+                use_spectrum=job.use_spectrum,
+                use_turbo=job.use_turbo,
+            )
+            for ref in job.references.all():
+                # Stream the bytes to a brand-new random path (upload_to is
+                # called again on save, see models._random_upload_path) --
+                # never share the original's path, since this job's DELETE
+                # removes its files and would take the copy's with it.
+                # shutil-style chunked copy via Django's storage, so even a
+                # large reference video isn't held in memory whole.
+                ref.file.open("rb")
+                try:
+                    new_ref = ReferenceAsset(job=new_job, kind=ref.kind, order=ref.order)
+                    new_ref.file.save(Path(ref.file.name).name, ref.file, save=False)
+                    new_ref.save()
+                finally:
+                    ref.file.close()
+            new_jobs.append(new_job)
+
+    # One enqueue covers all the copies -- process_queue() is the shared FIFO
+    # processor (see jobs()), and a redundant call just no-ops if the queue
+    # is already being worked through.
+    async_task("generation.tasks.process_queue")
+
+    finish_times = expected_finish_times()
+    return Response(
+        [
+            _serialize_job(j, detail=True, expected_finish_time=finish_times.get(j.id))
+            for j in new_jobs
+        ],
+        status=201,
+    )
 
 
 @extend_schema(

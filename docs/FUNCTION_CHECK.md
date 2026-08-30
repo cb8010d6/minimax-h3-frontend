@@ -194,6 +194,46 @@ DELETE /api/jobs/<id>/ (status=queued or done)      -> 204, row + its reference/
 DELETE /api/jobs/<id>/ (as a *different* user)      -> 404
 ```
 
+Re-queue (the JobModal "⋯ More" -> Re-queue dialog, `count` default 1, max
+10):
+
+```
+POST /api/jobs/<id>/requeue/ {"count": 2}           -> 201, a LIST of 2 new
+                                                         detail-serialized jobs,
+                                                         each status=queued with
+                                                         the same
+                                                         raw_prompt/improved_prompt/
+                                                         megapixels/aspect_ratio/
+                                                         width/height/
+                                                         duration_seconds/
+                                                         estimated_seconds/
+                                                         use_spectrum/use_turbo
+                                                         (plus steps on the row --
+                                                         not in the response, see
+                                                         the RequeueJobTests note)
+                                                         and the same prompt_hash
+                                                         as the original
+                                                         (same prompt -> same
+                                                         queue-list color line)
+POST /api/jobs/<id>/requeue/ {}                     -> 201, exactly 1 copy
+POST /api/jobs/<id>/requeue/ {"count": 0|11|"abc"}  -> 400
+POST /api/jobs/<id>/requeue/ (as a *different* user) -> 404
+```
+
+For a job with reference files, confirm each copy's reference file is a
+*copy*, not a link to the original: new path (different UUID), same
+bytes, and deleting any one of the copies (or the original) leaves the
+others' files intact. Also confirm the original job's row is untouched
+(same title/favorite/archived, same reference count). As with §1.6, the
+copies are real renders, so cancel them right after verifying (`POST
+/api/jobs/<copy_id>/cancel/`) and then DELETE them all to keep the queue
+and media volume clean. The original can 409 on DELETE for a few seconds
+if process_queue() claimed it in the meantime (it's first in the FIFO
+queue) -- cancelling a processing job is asynchronous, so retry after a
+short pause (see the Deletion block above). The automated coverage for
+all of the above lives in `backend/generation/tests.py::RequeueJobTests`
+(Docker-run, see "Backend" below).
+
 If testing via Django's test `Client` from `manage.py shell` rather than
 real `curl`/browser requests, use `Client(SERVER_NAME='localhost')` —
 the default `testserver` host isn't in `DJANGO_ALLOWED_HOSTS`, so every
