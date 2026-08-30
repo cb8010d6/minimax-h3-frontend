@@ -424,6 +424,24 @@ select {
   .app-layout.mobile-view-queue .generate-screen {
     display: none;
   }
+
+  /* In queue mode, give the sidebar back a bounded, internally-scrolling
+     height instead of the plain "grow to content, scroll the whole page"
+     .queue-sidebar gets above (the generate FORM is fine growing past one
+     screen -- a persistent job LIST reads better filling the device like
+     an app view, same idea as the desktop sticky sidebar just resized for
+     a single-pane mobile layout). The 90px subtracted is an approximation
+     of .mobile-view-switcher's own height + margins + <main>'s padding
+     (which itself varies between this breakpoint and 480px below) --
+     erring a little short of the real viewport is the safe direction, so
+     a few px of slack just means a little extra page scroll, not a sidebar
+     that overflows past the bottom of the screen. */
+  .app-layout.mobile-view-queue .queue-sidebar {
+    position: sticky;
+    top: calc(var(--nav-height) + 8px);
+    max-height: calc(100dvh - var(--nav-height) - 90px);
+    overflow-y: auto;
+  }
 }
 
 /* Tabs (content-type + generation mode) -- a segmented-control look: the
