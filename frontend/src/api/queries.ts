@@ -12,6 +12,7 @@ import type {
   GenerationJob,
   GenerationJobDetail,
   Invite,
+  JobFolder,
   Mode,
   QualityCatalog,
   QueueEstimate,
@@ -93,6 +94,10 @@ export interface CreateJobInput {
    * same reasoning as useSpectrum above -- see
    * generation/api.py::_resolve_use_turbo. */
   useTurbo?: boolean;
+  /** Folders (see JobFolder) to file this job under immediately, e.g. from
+   * GenerateScreen's pre-queue folder picker -- every id must be one of the
+   * requesting user's own folders. */
+  folderIds?: number[];
 }
 
 export function useCreateJob() {
@@ -117,11 +122,16 @@ export function useCreateJob() {
       if (input.useTurbo !== undefined) {
         form.set("use_turbo", input.useTurbo ? "true" : "false");
       }
+      for (const folderId of input.folderIds ?? []) form.append("folder_ids", String(folderId));
       return apiFetch<GenerationJobDetail>("/jobs/", { method: "POST", body: form });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
       void queryClient.invalidateQueries({ queryKey: ["queue-estimate"] });
+      // Refreshes folder job_counts when the job was filed under any at
+      // creation time (see CreateJobInput.folderIds) -- harmless no-op
+      // refetch otherwise.
+      void queryClient.invalidateQueries({ queryKey: ["folders"] });
     },
   });
 }
@@ -182,16 +192,20 @@ export function useUpdateJob() {
       title,
       isFavorite,
       isArchived,
+      folderIds,
     }: {
       jobId: number;
       title?: string;
       isFavorite?: boolean;
       isArchived?: boolean;
+      // Full replacement of this job's folder membership -- see JobFolder.
+      folderIds?: number[];
     }) => {
       const body: Record<string, unknown> = {};
       if (title !== undefined) body.title = title;
       if (isFavorite !== undefined) body.is_favorite = isFavorite;
       if (isArchived !== undefined) body.is_archived = isArchived;
+      if (folderIds !== undefined) body.folder_ids = folderIds;
       return apiFetch<GenerationJobDetail>(`/jobs/${jobId}/`, {
         method: "PATCH",
         body: JSON.stringify(body),
@@ -200,6 +214,52 @@ export function useUpdateJob() {
     onSuccess: (_data, { jobId }) => {
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
       void queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+    },
+  });
+}
+
+// Job folders -- user-organizational tags, see api/types.ts's JobFolder.
+export function useFolders() {
+  return useQuery({
+    queryKey: ["folders"],
+    queryFn: () => apiFetch<JobFolder[]>("/folders/"),
+  });
+}
+
+export function useCreateFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<JobFolder>("/folders/", { method: "POST", body: JSON.stringify({ name }) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["folders"] });
+    },
+  });
+}
+
+export function useRenameFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ folderId, name }: { folderId: number; name: string }) =>
+      apiFetch<JobFolder>(`/folders/${folderId}/`, { method: "PATCH", body: JSON.stringify({ name }) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["folders"] });
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      // Partial match -- also refreshes any already-open job detail cache
+      // (["job", id]) whose folder chips would otherwise show the old name.
+      void queryClient.invalidateQueries({ queryKey: ["job"] });
+    },
+  });
+}
+
+export function useDeleteFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (folderId: number) => apiFetch<void>(`/folders/${folderId}/`, { method: "DELETE" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["folders"] });
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job"] });
     },
   });
 }

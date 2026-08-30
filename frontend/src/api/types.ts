@@ -171,6 +171,23 @@ export interface QueueEstimate {
   estimated_finish_time: string;
 }
 
+// User-defined organizational tag for jobs (backend generation/models.py's
+// JobFolder) -- a job can be in any number of folders at once. Distinct from
+// Director's "project" (a render-chain/timeline concept, see
+// directorTypes.ts's Project) -- this is a pure organizational label.
+export interface JobFolder {
+  id: number;
+  name: string;
+  job_count: number;
+}
+
+// Minimal shape nested onto a job -- see GenerationJob.folders. Full
+// JobFolder (with job_count) only comes from useFolders().
+export interface JobFolderRef {
+  id: number;
+  name: string;
+}
+
 export type ReferenceKind = "image" | "video" | "audio";
 
 export interface ReferenceAsset {
@@ -215,6 +232,9 @@ export interface GenerationJob {
   // useUpdateJob(). The list endpoint always returns every job regardless
   // of this flag; filtering happens client-side (see QueueSidebar).
   is_archived: boolean;
+  // Organizational tags this job currently belongs to -- see useUpdateJob()'s
+  // folderIds. A job may be in any number of folders at once.
+  folders: JobFolderRef[];
   preset_id: number;
   // Quality tier label (e.g. "Draft", "Standard") -- RenderPreset.label, read
   // live server-side, see api.py's GenerationJobSerializer.

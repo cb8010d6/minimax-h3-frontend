@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   useChatReply,
   useConfig,
+  useCreateFolder,
   useCreateJob,
+  useFolders,
   usePresets,
   useQueueEstimate,
   useRefinePrompt,
@@ -23,6 +25,7 @@ import {
 } from "../../api/types";
 import { DropZone } from "../shared/DropZone";
 import { fetchAsFile, useObjectUrl, useObjectUrls } from "../shared/fileHelpers";
+import { FolderPicker } from "../shared/FolderPicker";
 import { InfoTooltip } from "../shared/InfoTooltip";
 import { ChatModal } from "./ChatModal";
 
@@ -161,9 +164,29 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
 
+  // Which folders (see JobFolder) this not-yet-queued job will be filed
+  // under -- sticky across submits (like mode/presetId/aspectRatio below,
+  // not reset in handleSubmit) so queuing several variants in a row into
+  // the same folder doesn't require re-picking it each time. A "Redo" (see
+  // the redo effect below) overwrites this to match the source job instead.
+  const [selectedFolderIds, setSelectedFolderIds] = useState<number[]>([]);
+  const folders = useFolders();
+  const createFolder = useCreateFolder();
+
   const refinePrompt = useRefinePrompt();
   const chatReply = useChatReply();
   const createJob = useCreateJob();
+
+  function toggleFolderSelection(folderId: number) {
+    setSelectedFolderIds((prev) =>
+      prev.includes(folderId) ? prev.filter((id) => id !== folderId) : [...prev, folderId],
+    );
+  }
+
+  async function createAndSelectFolder(name: string) {
+    const folder = await createFolder.mutateAsync(name);
+    setSelectedFolderIds((prev) => [...prev, folder.id]);
+  }
 
   // DropZone (below) only handles a drop that actually lands on a slot --
   // without this, a drop that misses by a pixel would fall through to the
@@ -212,6 +235,7 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
     setPendingRedoDurationId(redoJob.duration_id);
     setUseSpectrum(redoJob.use_spectrum);
     setUseTurbo(redoJob.use_turbo);
+    setSelectedFolderIds(redoJob.folders.map((f) => f.id));
 
     const redoId = redoJob.id;
     activeRedoIdRef.current = redoId;
@@ -475,6 +499,7 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
           : config.data.turbo_level === 2
             ? true
             : (useTurbo ?? false),
+      folderIds: selectedFolderIds.length ? selectedFolderIds : undefined,
     });
     setRawPrompt("");
     setImprovedPrompt("");
@@ -592,6 +617,17 @@ export function GenerateScreen({ redoJob, onRedoConsumed }: GenerateScreenProps)
               />
             </label>
           )}
+        </div>
+
+        <div className="generate-folders">
+          <span className="hint generate-folders-label">Folders (optional)</span>
+          <FolderPicker
+            folders={folders.data ?? []}
+            selectedIds={selectedFolderIds}
+            onToggle={toggleFolderSelection}
+            onCreate={(name) => void createAndSelectFolder(name)}
+            creating={createFolder.isPending}
+          />
         </div>
 
         {config.data?.spectrum_level != null && (

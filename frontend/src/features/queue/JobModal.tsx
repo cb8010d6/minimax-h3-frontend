@@ -1,11 +1,20 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE_URL } from "../../api/client";
-import { useCancelJob, useDeleteJob, useJob, useRequeueJob, useUpdateJob } from "../../api/queries";
+import {
+  useCancelJob,
+  useCreateFolder,
+  useDeleteJob,
+  useFolders,
+  useJob,
+  useRequeueJob,
+  useUpdateJob,
+} from "../../api/queries";
 import { useCreateProjectFromJob, useJobMemberships } from "../../api/directorQueries";
 import { MODE_LABELS, type GenerationJobDetail } from "../../api/types";
 import { displayTitle } from "./jobTitle";
 import { JobProgressBar } from "./JobProgressBar";
+import { FolderPicker } from "../shared/FolderPicker";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -47,6 +56,8 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
   const deleteJob = useDeleteJob();
   const cancelJob = useCancelJob();
   const updateJob = useUpdateJob();
+  const folders = useFolders();
+  const createFolder = useCreateFolder();
   const jobMemberships = useJobMemberships();
   const createProjectFromJob = useCreateProjectFromJob();
   const requeueJob = useRequeueJob();
@@ -212,6 +223,19 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
     updateJob.mutate({ jobId, isArchived: !job.data.is_archived });
   }
 
+  function toggleFolder(folderId: number) {
+    if (!job.data) return;
+    const current = job.data.folders.map((f) => f.id);
+    const next = current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId];
+    updateJob.mutate({ jobId, folderIds: next });
+  }
+
+  async function createAndAttachFolder(name: string) {
+    if (!job.data) return;
+    const folder = await createFolder.mutateAsync(name);
+    updateJob.mutate({ jobId, folderIds: [...job.data.folders.map((f) => f.id), folder.id] });
+  }
+
   function handleTitleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") e.currentTarget.blur(); // triggers onBlur -> saveTitle
     if (e.key === "Escape") setEditingTitle(false);
@@ -287,6 +311,16 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
             )}
 
             <dl className="modal-details">
+              <dt>Folders</dt>
+              <dd>
+                <FolderPicker
+                  folders={folders.data ?? []}
+                  selectedIds={job.data.folders.map((f) => f.id)}
+                  onToggle={toggleFolder}
+                  onCreate={(name) => void createAndAttachFolder(name)}
+                  creating={createFolder.isPending}
+                />
+              </dd>
               <dt>Prompt</dt>
               <dd>{job.data.raw_prompt}</dd>
               {job.data.improved_prompt && (
