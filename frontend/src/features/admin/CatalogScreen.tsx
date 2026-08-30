@@ -15,10 +15,7 @@ import type {
   Mode,
   QualityCatalog,
 } from "../../api/types";
-
-function modeKeys(level: CatalogLevel): Mode[] {
-  return Object.keys(level.modes) as Mode[];
-}
+import { CloseIcon } from "../shared/Icon";
 
 function reorderedLabels(order: string[], from: number, to: number): string[] {
   const next = [...order];
@@ -40,6 +37,12 @@ export function CatalogScreen() {
   const [pendingDurations, setPendingDurations] = useState<number[]>([]);
   const [draggedLabel, setDraggedLabel] = useState<string | null>(null);
   const [estimateMode, setEstimateMode] = useState<Mode | null>(null);
+  // Both tables below show one mode's columns at a time (a tab strip picks
+  // which) instead of every mode's MP/Steps/Active side by side -- at 7
+  // modes that used to mean 24 columns in the levels table alone, forcing
+  // a permanently-scrolled, mostly-truncated table on anything narrower
+  // than a very wide desktop monitor.
+  const [modeTab, setModeTab] = useState<Mode | null>(null);
   const catalog = catalogQuery.data;
 
   const activeDurationKeys = useMemo(() => {
@@ -70,7 +73,9 @@ export function CatalogScreen() {
     );
   }
 
+  const activeMode: Mode = modeTab && catalog.modes.includes(modeTab) ? modeTab : catalog.modes[0];
   const labelOrder = catalog.levels.map((l) => l.label);
+  const levelsWithActiveMode = catalog.levels.filter((level) => level.modes[activeMode]);
 
   function moveLevel(from: number, to: number) {
     if (to < 0 || to >= labelOrder.length || from === to) return;
@@ -113,32 +118,35 @@ export function CatalogScreen() {
         shown in the quality dropdown on the Generate screen.
       </p>
 
+      {/* One mode's columns at a time, governing both tables below --
+          previously every mode's MP/Steps/Active (or duration columns) sat
+          side by side, which meant a permanently horizontal-scrolled,
+          mostly-truncated table at 7 modes. */}
+      <div className="tab-strip catalog-mode-tabs" role="tablist" aria-label="Mode">
+        {catalog.modes.map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={`tab ${activeMode === mode ? "selected" : ""}`}
+            aria-selected={activeMode === mode}
+            onClick={() => setModeTab(mode)}
+          >
+            {mode}
+          </button>
+        ))}
+      </div>
+
       <h2>Quality levels</h2>
       <div className="catalog-table-scroll">
         <table className="catalog-table">
           <thead>
             <tr>
-              <th rowSpan={2}>Order</th>
-              <th rowSpan={2}>Label</th>
-              <th rowSpan={2}>Draft</th>
-              {catalog.modes.map((mode) => (
-                <th key={mode} colSpan={3}>
-                  {mode}
-                </th>
-              ))}
-            </tr>
-            <tr>
-              {catalog.modes.flatMap((mode) => [
-                <th key={`${mode}-mp`} className="catalog-mode-subheader">
-                  MP
-                </th>,
-                <th key={`${mode}-steps`} className="catalog-mode-subheader">
-                  Steps
-                </th>,
-                <th key={`${mode}-active`} className="catalog-mode-subheader">
-                  Active
-                </th>,
-              ])}
+              <th>Order</th>
+              <th>Label</th>
+              <th>Draft</th>
+              <th className="catalog-mode-subheader">MP</th>
+              <th className="catalog-mode-subheader">Steps</th>
+              <th className="catalog-mode-subheader">Active</th>
             </tr>
           </thead>
           <tbody>
@@ -146,7 +154,7 @@ export function CatalogScreen() {
               <LevelRow
                 key={level.label}
                 level={level}
-                modes={catalog.modes}
+                mode={activeMode}
                 activeDurationKeys={activeDurationKeys}
                 index={index}
                 totalLevels={catalog.levels.length}
@@ -164,54 +172,43 @@ export function CatalogScreen() {
 
       <h2>Duration options</h2>
       <div className="catalog-estimate-toolbar">
-        <span className="hint">Estimate from completed jobs, pooled across every level:</span>
-        {catalog.modes.map((mode) => (
-          <button key={mode} type="button" onClick={() => openEstimate(mode)}>
-            {mode}
-          </button>
-        ))}
+        <span className="hint">Estimate {activeMode} durations from completed jobs, pooled across every level:</span>
+        <button type="button" onClick={() => openEstimate(activeMode)}>
+          Estimate…
+        </button>
       </div>
-      <div className="catalog-table-scroll">
-        <table className="catalog-table catalog-duration-table">
-          <thead>
-            <tr>
-              <th rowSpan={2}>Seconds</th>
-              {catalog.levels.map((level) => (
-                <th key={level.label} colSpan={modeKeys(level).length}>
-                  {level.label}
-                </th>
-              ))}
-            </tr>
-            <tr>
-              {catalog.levels.flatMap((level) =>
-                modeKeys(level).map((mode) => (
-                  <th key={`${level.label}-${mode}`} className="catalog-mode-subheader">
-                    {mode}
-                  </th>
-                )),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.duration_seconds}>
-                <td className="catalog-duration-seconds">{row.duration_seconds}s</td>
-                {catalog.levels.flatMap((level) =>
-                  modeKeys(level).map((mode) => (
-                    <DurationCell
-                      key={`${level.label}-${mode}`}
-                      label={level.label}
-                      mode={mode}
-                      durationSeconds={row.duration_seconds}
-                      target={row.targets[level.label]?.[mode]}
-                    />
-                  )),
-                )}
+      {levelsWithActiveMode.length === 0 ? (
+        <p className="hint">No quality level has {activeMode} enabled yet.</p>
+      ) : (
+        <div className="catalog-table-scroll">
+          <table className="catalog-table catalog-duration-table">
+            <thead>
+              <tr>
+                <th>Seconds</th>
+                {levelsWithActiveMode.map((level) => (
+                  <th key={level.label}>{level.label}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.duration_seconds}>
+                  <td className="catalog-duration-seconds">{row.duration_seconds}s</td>
+                  {levelsWithActiveMode.map((level) => (
+                    <DurationCell
+                      key={level.label}
+                      label={level.label}
+                      mode={activeMode}
+                      durationSeconds={row.duration_seconds}
+                      target={row.targets[level.label]?.[activeMode]}
+                    />
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <AddDurationControl
         onAdd={(values) => setPendingDurations((prev) => [...new Set([...prev, ...values])])}
       />
@@ -235,7 +232,7 @@ export function CatalogScreen() {
 
 function LevelRow({
   level,
-  modes,
+  mode,
   activeDurationKeys,
   index,
   totalLevels,
@@ -246,7 +243,7 @@ function LevelRow({
   onDrop,
 }: {
   level: CatalogLevel;
-  modes: Mode[];
+  mode: Mode;
   activeDurationKeys: Set<string>;
   index: number;
   totalLevels: number;
@@ -323,15 +320,12 @@ function LevelRow({
           title="Draft preset (fast/low-step preview, not a final render)"
         />
       </td>
-      {modes.map((mode) => (
-        <LevelModeCell
-          key={mode}
-          levelLabel={level.label}
-          mode={mode}
-          preset={level.modes[mode]}
-          hasActiveDurations={activeDurationKeys.has(`${level.label}:${mode}`)}
-        />
-      ))}
+      <LevelModeCell
+        levelLabel={level.label}
+        mode={mode}
+        preset={level.modes[mode]}
+        hasActiveDurations={activeDurationKeys.has(`${level.label}:${mode}`)}
+      />
     </tr>
   );
 }
@@ -890,7 +884,7 @@ function EstimateModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
         <h2>Estimate durations: {mode}</h2>
         {isPending && !result && <p className="hint">Fitting a curve to completed jobs…</p>}

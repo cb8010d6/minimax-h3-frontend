@@ -21,6 +21,7 @@ import {
   type ChatMessage,
 } from "../../api/types";
 import { DropZone } from "../shared/DropZone";
+import { CloseIcon } from "../shared/Icon";
 import { ChatModal } from "../generate/ChatModal";
 import { JobProgressBar } from "../queue/JobProgressBar";
 
@@ -223,7 +224,7 @@ export function ClipEditorPanel({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
         <h2>
           Clip #{clip.order + 1} <span className="hint modal-mode-label">{MODE_LABELS[clip.mode]}</span>

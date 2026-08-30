@@ -15,6 +15,7 @@ import { MODE_LABELS, type GenerationJobDetail } from "../../api/types";
 import { displayTitle } from "./jobTitle";
 import { JobProgressBar } from "./JobProgressBar";
 import { FolderPicker } from "../shared/FolderPicker";
+import { CloseIcon, MoreIcon } from "../shared/Icon";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -245,7 +246,7 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
 
         {job.isLoading && <p className="hint">Loading…</p>}
@@ -400,7 +401,7 @@ export function JobModal({ jobId, onClose, onRedo }: JobModalProps) {
                   aria-haspopup="true"
                   title="Extra actions for this job"
                 >
-                  <span aria-hidden="true">⋯</span> More
+                  <MoreIcon size={15} /> More
                 </button>
                 {moreOpen && (
                   <div className="modal-more-menu" role="menu">

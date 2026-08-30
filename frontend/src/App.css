@@ -18,14 +18,14 @@
      changes -- min-height below guarantees the nav is never shorter than
      this (only taller, e.g. if it wraps), which is the safe direction for a
      max-height calc to be conservative. */
-  --nav-height: 66px;
+  --nav-height: 68px;
 }
 
 .app-nav {
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 16px 24px;
+  padding: 14px 28px;
   min-height: var(--nav-height);
   box-sizing: border-box;
   border-bottom: 1px solid var(--border);
@@ -33,6 +33,27 @@
   top: 0;
   background: var(--bg);
   z-index: 10;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
 }
 
 .app-title {
@@ -43,13 +64,13 @@
 
 .app-nav-links {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   flex-grow: 1;
 }
 
 .app-nav-links a {
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
   color: var(--text);
   text-decoration: none;
   font-size: 15px;
@@ -68,15 +89,48 @@
 }
 
 .app-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   color: var(--text);
   white-space: nowrap;
   margin-left: auto;
 }
 
+.app-user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.app-logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  border-radius: 7px;
+  color: var(--text);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.app-logout:hover {
+  background: var(--social-bg);
+  color: var(--accent);
+}
+
 main {
   flex-grow: 1;
-  padding: 24px;
+  padding: 28px;
   box-sizing: border-box;
 }
 
@@ -96,11 +150,11 @@ main {
   align-items: center;
   text-align: center;
   max-width: 420px;
-  padding: 40px 32px;
+  padding: 44px 36px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 20px;
   background: var(--bg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
 }
 
 .login-card h1 {
@@ -112,11 +166,11 @@ main {
 .login-card h1::before {
   content: "";
   display: block;
-  width: 40px;
-  height: 4px;
-  margin: 0 auto 16px;
-  border-radius: 999px;
-  background: var(--accent);
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 18px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
 }
 
 .hint {
@@ -165,8 +219,8 @@ main {
   max-width: 320px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card-bg, var(--bg));
+  border-radius: 10px;
+  background: var(--bg);
   box-shadow: var(--shadow);
   color: var(--text);
   font-size: 13px;
@@ -174,7 +228,7 @@ main {
 }
 
 .error {
-  color: #d13c3c;
+  color: var(--danger);
   font-size: 15px;
   margin: 8px 0;
 }
@@ -186,7 +240,7 @@ main {
   text-align: center;
   padding: 28px 16px;
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 /* Buttons & form controls */
@@ -196,9 +250,9 @@ button,
   font: inherit;
   font-size: 15px;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border);
-  background: transparent;
+  background: var(--bg);
   color: var(--text-h);
   cursor: pointer;
   text-decoration: none;
@@ -212,6 +266,7 @@ button,
 button:hover,
 .button:hover {
   border-color: var(--accent-border);
+  background: var(--social-bg);
 }
 
 button:active,
@@ -237,41 +292,31 @@ select:focus-visible,
 }
 
 .button-primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 65%, var(--accent-2)));
   border-color: var(--accent);
   color: #fff;
 }
 
 .button-primary:hover {
   box-shadow: var(--shadow);
+  filter: brightness(1.05);
 }
 
 .button-danger {
-  color: #dc2626;
-  border-color: rgba(220, 38, 38, 0.4);
+  color: var(--danger);
+  background: var(--bg);
+  border-color: var(--danger-border);
 }
 
 .button-danger:hover {
-  background: rgba(220, 38, 38, 0.1);
-  border-color: #dc2626;
-}
-
-@media (prefers-color-scheme: dark) {
-  .button-danger {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.4);
-  }
-
-  .button-danger:hover {
-    background: rgba(248, 113, 113, 0.15);
-    border-color: #f87171;
-  }
+  background: var(--danger-bg);
+  border-color: var(--danger);
 }
 
 fieldset {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 12px;
+  padding: 18px;
   margin: 0 0 16px;
 }
 
@@ -283,23 +328,37 @@ legend {
 
 textarea,
 input[type="text"],
+input[type="number"],
 select {
   font: inherit;
-  width: 100%;
   box-sizing: border-box;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 8px 11px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* width:100% is only right for these three -- NOT input[type="number"]
+   above (kept separate on purpose): a bare, high-specificity
+   `input[type="number"] { width: 100% }` would beat every narrower
+   number-input class throughout the app (catalog MP/steps/estimate
+   fields, the re-queue count, scene duration, etc. -- all plain class
+   selectors, which lose a specificity tie against an element+attribute
+   selector) and silently blow their widths back out to 100% of their
+   container regardless of what those classes ask for. */
+textarea,
+input[type="text"],
+select {
+  width: 100%;
+}
+
 /* Persistent two-pane layout: Generate (center) + Queue (right sidebar) */
 
 .app-layout {
   display: flex;
-  gap: 24px;
+  gap: 28px;
   align-items: flex-start;
   max-width: 1200px;
   margin: 0 auto;
@@ -308,6 +367,13 @@ select {
 .generate-screen {
   flex: 1 1 640px;
   min-width: 0;
+}
+
+/* Generate/Queue view switcher (see App.tsx's MainLayout) -- hidden above
+   the 900px column-stack breakpoint, where both panes always show side by
+   side and switching is meaningless. */
+.mobile-view-switcher {
+  display: none;
 }
 
 @media (max-width: 900px) {
@@ -333,14 +399,79 @@ select {
     position: static;
     max-height: none;
   }
+
+  .mobile-view-switcher {
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    margin: 0 0 16px;
+    border-radius: 12px;
+    background: var(--code-bg);
+  }
+
+  .mobile-view-switcher .tab {
+    flex: 1 1 0;
+  }
+
+  /* .queue-sidebar used to always render after the whole Generate form in
+     document order -- checking on a render meant scrolling past the entire
+     form first. Below this breakpoint only one pane shows at a time,
+     picked by the switcher above (default: Generate, same as before). */
+  .app-layout.mobile-view-generate .queue-sidebar {
+    display: none;
+  }
+
+  .app-layout.mobile-view-queue .generate-screen {
+    display: none;
+  }
+
+  /* In queue mode, give the sidebar back a bounded, internally-scrolling
+     height instead of the plain "grow to content, scroll the whole page"
+     .queue-sidebar gets above (the generate FORM is fine growing past one
+     screen -- a persistent job LIST reads better filling the device like
+     an app view, same idea as the desktop sticky sidebar just resized for
+     a single-pane mobile layout). The 90px subtracted is an approximation
+     of .mobile-view-switcher's own height + margins + <main>'s padding
+     (which itself varies between this breakpoint and 480px below) --
+     erring a little short of the real viewport is the safe direction, so
+     a few px of slack just means a little extra page scroll, not a sidebar
+     that overflows past the bottom of the screen. */
+  .app-layout.mobile-view-queue .queue-sidebar {
+    /* Overrides .queue-sidebar's own "flex: 1 1 auto" above -- flex-basis:
+       auto on a flex item resolves to that item's own height property, so
+       leaving flex-grow/shrink active here left the explicit height below
+       fighting the flex algorithm instead of governing outright. */
+    flex: none;
+    box-sizing: border-box;
+    background: var(--bg);
+    border-radius: 14px 14px 0 0;
+    border-top: none;
+    padding: 16px 16px 16px;
+    position: sticky;
+    top: calc(var(--nav-height) + 8px);
+    /* height (not max-height): this should occupy that vertical space
+       outright, not just cap itself once content happens to overflow it --
+       a short list should still visually fill the device down to the
+       bottom, not leave blank space below a short box. Declared twice: a
+       vh fallback first, then the dvh version -- a browser that doesn't
+       understand dvh drops that whole second declaration as invalid and
+       keeps the first, rather than losing height entirely. */
+    height: calc(100vh - var(--nav-height) - 90px);
+    height: calc(100dvh - var(--nav-height) - 90px);
+    overflow-y: auto;
+  }
 }
 
-/* Tabs (content-type + generation mode) */
+/* Tabs (content-type + generation mode) -- a segmented-control look: the
+   strip itself is a rounded, filled track, and the selected tab is a
+   raised "chip" inside it, rather than the previous underline indicator. */
 
 .tab-strip {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
+  gap: 3px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--code-bg);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -350,7 +481,7 @@ select {
 }
 
 .content-tabs {
-  margin-bottom: 4px;
+  margin-bottom: 10px;
 }
 
 .mode-tabs {
@@ -361,24 +492,24 @@ select {
   font: inherit;
   padding: 8px 16px;
   border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
+  border-radius: 9px;
   background: none;
   color: var(--text);
   text-decoration: none;
   cursor: pointer;
   flex: 1 1 0;
   text-align: center;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.tab:hover:not(:disabled) {
+.tab:hover:not(:disabled):not(.selected) {
   color: var(--text-h);
 }
 
 .tab.selected {
   color: var(--text-h);
-  border-bottom-color: var(--accent);
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
@@ -396,38 +527,32 @@ select {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   border-radius: 999px;
-  color: #92400e;
-  background: rgba(217, 119, 6, 0.15);
+  color: var(--warning);
+  background: var(--warning-bg);
   vertical-align: middle;
-}
-
-@media (prefers-color-scheme: dark) {
-  .tab-badge {
-    color: #fbbf24;
-    background: rgba(217, 119, 6, 0.2);
-  }
 }
 
 .experimental-notice {
   padding: 8px 12px;
   margin: 0 0 12px;
-  border-radius: 8px;
-  background: rgba(217, 119, 6, 0.08);
+  border-radius: 10px;
+  background: var(--warning-bg);
   border: 1px solid rgba(217, 119, 6, 0.25);
 }
 
-/* Resolution & length toolbar -- deliberately subtler than a boxed fieldset
-   (a compact, unbordered row) since megapixels/ratio/length matter less
-   moment-to-moment than the prompt itself. */
+/* Resolution & length toolbar -- a softly boxed panel so quality/aspect
+   ratio/length read as one grouped control cluster (previously just a
+   bottom-border row, easy to miss as a distinct section). */
 
 .toolbar {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
   align-items: flex-end;
-  padding-bottom: 16px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: var(--code-bg);
   font-size: 0.85em;
 }
 
@@ -460,10 +585,13 @@ select {
 }
 
 /* Prompt is the primary control -- larger, autofocused, the most visually
-   prominent fieldset on the screen. */
+   prominent fieldset on the screen: an accent-tinted border + a faint lift
+   instead of the previous blunt 2px-border trick. */
 
 .prompt-fieldset {
-  border-width: 2px;
+  border-color: var(--accent-border);
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
 }
 
 .prompt-input {
@@ -479,7 +607,7 @@ select {
 .improved-prompt {
   margin-top: 12px;
   padding: 12px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--code-bg);
 }
 
@@ -507,7 +635,7 @@ select {
 .file-drop {
   display: block;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 10px;
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
@@ -515,6 +643,7 @@ select {
 
 .file-drop:hover {
   border-color: var(--accent-border);
+  background: var(--accent-bg);
 }
 
 .file-drop.drag-over {
@@ -556,7 +685,7 @@ select {
 .ref-thumb {
   max-width: 160px;
   max-height: 120px;
-  border-radius: 6px;
+  border-radius: 8px;
   object-fit: cover;
   border: 1px solid var(--border);
 }
@@ -564,7 +693,7 @@ select {
 .ref-thumb-sm {
   width: 40px;
   height: 40px;
-  border-radius: 4px;
+  border-radius: 6px;
   object-fit: cover;
   border: 1px solid var(--border);
   flex-shrink: 0;
@@ -651,7 +780,7 @@ select {
 .chat-markdown pre {
   background: var(--code-bg);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow-x: auto;
 }
 
@@ -675,7 +804,7 @@ select {
 .final-prompt-card {
   margin-top: 8px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--code-bg);
   border: 1px solid var(--accent-border);
 }
@@ -702,7 +831,7 @@ select {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--text);
+  background: var(--accent);
   opacity: 0.4;
   animation: typing-bounce 1.1s infinite ease-in-out;
 }
@@ -814,13 +943,13 @@ select {
   display: flex;
   align-items: stretch;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
+  background: var(--bg);
   transition: border-color 0.15s ease, box-shadow 0.2s ease, transform 0.15s ease, background-color 0.15s ease;
 }
 
 .queue-entry:hover {
   border-color: var(--accent-border);
-  background: var(--social-bg);
   box-shadow: var(--shadow);
   transform: translateY(-1px);
 }
@@ -845,7 +974,7 @@ select {
 .queue-entry-action-bar {
   display: flex;
   flex-direction: column;
-  width: 28px;
+  width: 30px;
   flex-shrink: 0;
   border-left: 3px solid var(--border); /* overridden per-row via inline style, see promptColor() */
 }
@@ -860,8 +989,6 @@ select {
   border-radius: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
-  line-height: 1;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
@@ -875,15 +1002,15 @@ select {
   border-top: 1px solid var(--border);
 }
 
-/* Matches .queue-entry's own 10px radius on its two right corners (~1px
+/* Matches .queue-entry's own 12px radius on its two right corners (~1px
    less to sit just inside the card's own border) -- see .queue-entry's
    comment on why this isn't done via overflow:hidden instead. */
 .queue-entry-action-favorite {
-  border-top-right-radius: 9px;
+  border-top-right-radius: 11px;
 }
 
 .queue-entry-action-folder {
-  border-bottom-right-radius: 9px;
+  border-bottom-right-radius: 11px;
 }
 
 .queue-entry-action-button:hover {
@@ -892,7 +1019,7 @@ select {
 }
 
 .queue-entry-action-favorite[aria-pressed="true"] {
-  background: #e0355f;
+  background: var(--accent-2);
   color: #fff;
 }
 
@@ -926,6 +1053,15 @@ select {
   color: var(--accent);
 }
 
+.queue-filters-toggle svg {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.queue-filters-toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
 .queue-filters-badge {
   width: 7px;
   height: 7px;
@@ -935,14 +1071,13 @@ select {
 }
 
 /* Wraps .queue-filters + .folder-manage below into one visually distinct
-   cluster (moderate visual-polish pass) -- previously the filter controls
-   just floated directly in the sidebar with no boundary of their own. */
+   cluster -- previously the filter controls just floated directly in the
+   sidebar with no boundary of their own. */
 .queue-filters-panel {
   padding: 12px;
   margin: 0 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--social-bg);
+  border-radius: 12px;
+  background: var(--code-bg);
 }
 
 .queue-filters {
@@ -1035,7 +1170,7 @@ select {
   font: inherit;
   font-size: 13px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
@@ -1086,6 +1221,15 @@ select {
 
 .queue-folder-group-header:hover {
   color: var(--accent);
+}
+
+.queue-folder-group-header svg {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.queue-folder-group-header[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
 }
 
 .queue-folder-group-count {
@@ -1203,7 +1347,7 @@ select {
   padding: 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
 }
 
@@ -1249,7 +1393,7 @@ select {
   padding: 10px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
 }
 
@@ -1272,7 +1416,7 @@ select {
   width: 56px;
   height: 40px;
   flex-shrink: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   overflow: hidden;
   background: var(--code-bg);
   display: flex;
@@ -1298,7 +1442,7 @@ select {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* The root's 145% line-height (tuned for 18px prose, see index.css) left
+  /* The root's 150% line-height (tuned for 18px prose, see index.css) left
      a surprising amount of empty space above/below each of this 12-14px
      row's two text lines once they stopped wrapping to more lines --
      tightened here rather than globally, since prose elsewhere still wants
@@ -1381,7 +1525,7 @@ select {
 .job-progress-fill {
   height: 100%;
   width: 0;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
   transition: width 0.3s ease;
 }
 
@@ -1409,7 +1553,7 @@ select {
 }
 
 .job-status-done {
-  color: #1a8a4a;
+  color: var(--success);
 }
 
 .job-status-cancelled {
@@ -1420,7 +1564,7 @@ select {
 /* Applied alongside .job-status-done when a "done" job actually failed
    (no video_url) -- see features/queue/QueueSidebar.tsx's didJobFail(). */
 .job-status-failed {
-  color: #d13c3c;
+  color: var(--danger);
 }
 
 .job-status-processing,
@@ -1433,7 +1577,7 @@ select {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(12, 9, 20, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1445,14 +1589,14 @@ select {
   position: relative;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 24px;
   max-width: 720px;
   width: 100%;
   max-height: 90dvh;
   overflow-y: auto;
   box-sizing: border-box;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-wide {
@@ -1461,15 +1605,25 @@ select {
 
 .modal-close {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
   border: none;
+  border-radius: 8px;
   background: none;
-  font-size: 24px;
-  line-height: 1;
   cursor: pointer;
   color: var(--text);
-  padding: 4px 8px;
+  padding: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.modal-close:hover {
+  background: var(--social-bg);
+  color: var(--text-h);
 }
 
 /* Re-queue dialog (JobModal's "⋯ More" -> Re-queue): a NESTED .modal-overlay
@@ -1500,7 +1654,7 @@ select {
   width: 90px;
   box-sizing: border-box;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
@@ -1508,7 +1662,7 @@ select {
 
 .modal-title-editable {
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 2px 4px;
   margin: -2px -4px;
 }
@@ -1537,7 +1691,7 @@ select {
   padding: 2px 4px;
   margin: -2px -4px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--bg);
   color: var(--text-h);
 }
@@ -1554,7 +1708,7 @@ select {
 .modal-video {
   width: 100%;
   max-height: 60vh;
-  border-radius: 8px;
+  border-radius: 10px;
   margin: 12px 0;
   background: #000;
 }
@@ -1563,7 +1717,7 @@ select {
   width: 100%;
   max-height: 60vh;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: 10px;
   margin: 12px 0;
   background: var(--code-bg);
 }
@@ -1594,6 +1748,9 @@ select {
 }
 
 .link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font: inherit;
   font-weight: 600;
   color: var(--text-h);
@@ -1643,7 +1800,7 @@ select {
   padding: 6px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
 }
 
@@ -1677,7 +1834,7 @@ select {
 .admin-django-link {
   margin-left: auto;
   align-self: center;
-  padding: 0 4px;
+  padding: 0 8px;
   font-size: 14px;
   color: var(--text);
   text-decoration: none;
@@ -1701,8 +1858,7 @@ select {
   align-items: flex-end;
   padding: 16px;
   margin: 16px 0 20px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--code-bg);
 }
 
@@ -1727,13 +1883,15 @@ select {
   flex-wrap: wrap;
   padding: 12px 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  border-radius: 10px;
+  background: var(--bg);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .invite-row:hover {
   border-color: var(--accent-border);
   box-shadow: var(--shadow);
+  transform: translateY(-1px);
 }
 
 .invite-row-main {
@@ -1765,7 +1923,8 @@ select {
 }
 
 .invite-status-redeemed {
-  color: #1a8a4a;
+  color: var(--success);
+  background: var(--success-bg);
 }
 
 .invite-status-expired {
@@ -1789,7 +1948,7 @@ select {
 .catalog-table-scroll {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   margin: 8px 0 16px;
 }
 
@@ -1822,13 +1981,19 @@ select {
   background: var(--social-bg);
 }
 
-.catalog-label-input {
+/* input.catalog-label-input (not just .catalog-label-input): a bare class
+   selector loses a specificity tie against the global `input[type="text"]
+   { width: 100% }` rule (an element+attribute selector), which was
+   silently stretching this back out to its <td>'s full width regardless
+   of the 220px below -- qualifying with the element bumps this to the
+   same specificity tier, and source order (this comes later) wins the tie. */
+input.catalog-label-input {
   font-weight: 600;
   font-size: 15px;
   border: 1px solid transparent;
   background: none;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   width: 220px;
 }
 
@@ -1878,16 +2043,15 @@ select {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: #d13c3c22;
-  color: #d13c3c;
+  background: var(--danger-bg);
+  color: var(--danger);
   white-space: nowrap;
 }
 
 .catalog-add-level {
   padding: 16px;
   margin: 16px 0 32px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--code-bg);
 }
 
@@ -1930,8 +2094,9 @@ select {
   flex-direction: column;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px 10px;
+  background: var(--bg);
 }
 
 .catalog-add-level-mode legend {
@@ -2011,7 +2176,7 @@ select {
 }
 
 .catalog-duration-cell.catalog-cell-error {
-  background: #d13c3c14;
+  background: var(--danger-bg);
 }
 
 .catalog-duration-estimate {
@@ -2051,7 +2216,7 @@ select {
   max-width: 380px;
   height: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--code-bg);
 }
 
@@ -2090,7 +2255,7 @@ select {
 /* Director Mode */
 
 .director-list-screen {
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
 }
 
@@ -2104,33 +2269,43 @@ select {
   flex-grow: 1;
 }
 
+/* A responsive card grid (was a stacked single-column list) -- reads much
+   more like a landing/dashboard page for however many projects exist,
+   instead of a thin list down the left of a mostly-empty page. Same <ul>/
+   <li>/ProjectCard markup -- purely a CSS layout change. */
 .director-project-list {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
 }
 
 .director-project-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: 14px;
+  background: var(--bg);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .director-project-card:hover {
   border-color: var(--accent-border);
   box-shadow: var(--shadow);
+  transform: translateY(-2px);
 }
 
 .director-project-card-open {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1 1 auto;
   width: 100%;
   text-align: left;
-  padding: 14px 16px 6px;
+  padding: 16px 18px 8px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -2152,7 +2327,7 @@ select {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 16px 12px;
+  padding: 0 18px 14px;
   font-size: 13px;
 }
 
@@ -2201,7 +2376,7 @@ select {
 
 .director-timeline {
   display: flex;
-  gap: 4px;
+  gap: 10px;
   align-items: flex-start;
   overflow-x: auto;
   padding: 8px 4px 20px;
@@ -2242,13 +2417,18 @@ select {
 .clip-box {
   display: flex;
   flex-direction: column;
-  width: 180px;
+  width: 184px;
   flex-shrink: 0;
   border: 2px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--bg);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.clip-box:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .clip-box-new {
@@ -2257,16 +2437,16 @@ select {
 }
 
 .clip-box-dirty {
-  border-color: #d13c3c;
+  border-color: var(--danger);
 }
 
 .clip-box-clean {
-  border-color: #1a8a4a;
+  border-color: var(--success);
 }
 
 .clip-box-failed {
-  border-color: #7f1d1d;
-  background: rgba(127, 29, 29, 0.05);
+  border-color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .clip-box-active {
@@ -2382,47 +2562,22 @@ select {
   color: var(--text);
 }
 
-.clip-box-status-clip-box-dirty {
-  color: #d13c3c;
+/* Matches ClipBox.tsx's statusClass() return values directly (no more
+   double-prefixed "clip-box-status-clip-box-dirty" -- see that file). */
+.clip-box-status-dirty {
+  color: var(--danger);
 }
 
-.clip-box-status-clip-box-clean {
-  color: #1a8a4a;
+.clip-box-status-clean {
+  color: var(--success);
 }
 
-.clip-box-status-clip-box-failed {
-  color: #7f1d1d;
+.clip-box-status-failed {
+  color: var(--danger);
 }
 
-.clip-box-status-clip-box-active {
+.clip-box-status-active {
   color: var(--accent);
-}
-
-@media (prefers-color-scheme: dark) {
-  .clip-box-dirty {
-    border-color: #f87171;
-  }
-
-  .clip-box-status-clip-box-dirty {
-    color: #f87171;
-  }
-
-  .clip-box-clean {
-    border-color: #34d399;
-  }
-
-  .clip-box-status-clip-box-clean {
-    color: #34d399;
-  }
-
-  .clip-box-failed {
-    border-color: #b91c1c;
-    background: rgba(185, 28, 28, 0.12);
-  }
-
-  .clip-box-status-clip-box-failed {
-    color: #f87171;
-  }
 }
 
 /* Clip editor panel */
@@ -2454,7 +2609,7 @@ select {
 
 .plan-scene-card {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px;
 }
 
@@ -2499,7 +2654,7 @@ select {
 
 .plan-resource-hint {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 12px;
 }
@@ -2533,7 +2688,7 @@ select {
   justify-content: space-between;
   gap: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 10px;
 }
 
@@ -2568,7 +2723,7 @@ select {
   .app-user {
     flex-basis: 100%;
     margin-left: 0;
-    text-align: right;
+    justify-content: flex-end;
   }
 
   main {
@@ -2584,7 +2739,7 @@ select {
 
   .login-card {
     padding: 28px 20px;
-    border-radius: 12px;
+    border-radius: 14px;
   }
 
   button,
@@ -2651,5 +2806,9 @@ select {
 
   .invite-row-actions {
     justify-content: flex-end;
+  }
+
+  .director-project-list {
+    grid-template-columns: 1fr;
   }
 }

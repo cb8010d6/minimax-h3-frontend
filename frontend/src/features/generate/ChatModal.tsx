@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../../api/types";
+import { CloseIcon } from "../shared/Icon";
 import { parseChatMessage } from "./chatMarkdown";
 
 interface ChatModalProps {
@@ -46,7 +47,7 @@ export function ChatModal({
         aria-label="Prompt chat"
       >
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
         <h2>Prompt chat</h2>
 

@@ -7,11 +7,20 @@ import { LoginScreen } from "./features/auth";
 import { ProjectBoard, ProjectListScreen } from "./features/director";
 import { GenerateScreen } from "./features/generate";
 import { JobModal, QueueSidebar } from "./features/queue";
+import { LogOutIcon } from "./features/shared/Icon";
 import "./App.css";
 
 function MainLayout() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [redoPayload, setRedoPayload] = useState<GenerationJobDetail | null>(null);
+  // Only meaningful below the .app-layout column-stack breakpoint (900px,
+  // see App.css) -- above it both panes always show side by side and this
+  // switcher stays hidden. Below it, .queue-sidebar used to render after
+  // the entire Generate form in document order, so checking on a render
+  // meant scrolling past the whole form first (owner-reported pain point).
+  // The className below toggles which pane is display:none at that
+  // breakpoint; nothing here affects layout above it.
+  const [mobileView, setMobileView] = useState<"generate" | "queue">("generate");
 
   function handleRedo(job: GenerationJobDetail) {
     setRedoPayload(job);
@@ -20,7 +29,25 @@ function MainLayout() {
 
   return (
     <>
-      <div className="app-layout">
+      <div className="mobile-view-switcher" role="tablist" aria-label="View">
+        <button
+          type="button"
+          className={`tab ${mobileView === "generate" ? "selected" : ""}`}
+          aria-selected={mobileView === "generate"}
+          onClick={() => setMobileView("generate")}
+        >
+          Generate
+        </button>
+        <button
+          type="button"
+          className={`tab ${mobileView === "queue" ? "selected" : ""}`}
+          aria-selected={mobileView === "queue"}
+          onClick={() => setMobileView("queue")}
+        >
+          Queue
+        </button>
+      </div>
+      <div className={`app-layout mobile-view-${mobileView}`}>
         <GenerateScreen redoJob={redoPayload} onRedoConsumed={() => setRedoPayload(null)} />
         <QueueSidebar onOpenJob={setSelectedJobId} />
       </div>
@@ -57,7 +84,12 @@ function App() {
   return (
     <>
       <nav className="app-nav">
-        <span className="app-title">Minimax H3 Generator</span>
+        <div className="app-brand">
+          <span className="app-mark" aria-hidden="true">
+            M3
+          </span>
+          <span className="app-title">Minimax H3</span>
+        </div>
         <div className="app-nav-links">
           <NavLink to="/" end>
             Generate
@@ -66,7 +98,13 @@ function App() {
           {me.data.is_staff && <NavLink to="/manage">Admin</NavLink>}
         </div>
         <span className="app-user">
-          {me.data.username} · <a href="/accounts/logout/">Log out</a>
+          <span className="app-user-avatar" aria-hidden="true">
+            {(me.data.username ?? "?").slice(0, 1).toUpperCase()}
+          </span>
+          {me.data.username}
+          <a className="app-logout" href="/accounts/logout/" title="Log out" aria-label="Log out">
+            <LogOutIcon size={16} />
+          </a>
         </span>
       </nav>
       <main>

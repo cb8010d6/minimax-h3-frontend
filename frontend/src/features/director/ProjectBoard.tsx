@@ -14,6 +14,7 @@ import {
 import { useConfig, usePresets, useRefinePrompt } from "../../api/queries";
 import { CONTINUATION_CAPABLE_MODES, MODE_LABELS } from "../../api/types";
 import type { Clip } from "../../api/directorTypes";
+import { CloseIcon } from "../shared/Icon";
 import { InfoTooltip } from "../shared/InfoTooltip";
 import { ClipBox } from "./ClipBox";
 import { ClipEditorPanel } from "./ClipEditorPanel";
@@ -466,7 +467,7 @@ export function ProjectBoard() {
               onClick={() => setContinuityReportOpen(false)}
               aria-label="Close"
             >
-              ×
+              <CloseIcon size={16} />
             </button>
             <h2>Continuity check</h2>
             {checkContinuity.isPending && <p className="hint">Reviewing every clip's prompt…</p>}

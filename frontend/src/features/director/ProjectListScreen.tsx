@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCreateDirectorProject, useDeleteDirectorProject, useDirectorProjects } from "../../api/directorQueries";
 import type { Project } from "../../api/directorTypes";
+import { CloseIcon, TrashIcon } from "../shared/Icon";
 
 function relativeTime(iso: string): string {
   const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -86,7 +87,7 @@ function DeleteProjectModal({ project, onClose }: { project: Project; onClose: (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-          ×
+          <CloseIcon size={16} />
         </button>
         <h2>Delete project?</h2>
         <p className="hint">
@@ -158,7 +159,7 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
             setDeleteModalOpen(true);
           }}
         >
-          Delete
+          <TrashIcon size={13} /> Delete
         </button>
       </div>
 

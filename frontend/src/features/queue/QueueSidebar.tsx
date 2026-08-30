@@ -15,6 +15,7 @@ import { displayTitle } from "./jobTitle";
 import { promptColor } from "./promptColor";
 import { JobProgressBar } from "./JobProgressBar";
 import { FolderPicker } from "../shared/FolderPicker";
+import { ArchiveIcon, ChevronDownIcon, FolderIcon, HeartIcon } from "../shared/Icon";
 
 const NOTIFY_STORAGE_KEY = "notifyOnJobDone";
 const ACTIVE_STATUSES = new Set<JobStatus>(["queued", "processing"]);
@@ -158,7 +159,7 @@ function QueueEntry({ job, onOpen, folders }: { job: GenerationJob; onOpen: () =
                   className="queue-entry-folder-badge"
                   title={job.folders.map((f) => f.name).join(", ")}
                 >
-                  <span aria-hidden="true">📁</span>
+                  <FolderIcon size={11} />
                   {job.folders.length}
                 </span>
               )}
@@ -199,7 +200,7 @@ function QueueEntry({ job, onOpen, folders }: { job: GenerationJob; onOpen: () =
           aria-pressed={job.is_favorite}
           title={job.is_favorite ? "Remove from favorites" : "Add to favorites"}
         >
-          <span aria-hidden="true">{job.is_favorite ? "♥" : "♡"}</span>
+          <HeartIcon size={14} filled={job.is_favorite} />
         </button>
         <button
           type="button"
@@ -208,7 +209,7 @@ function QueueEntry({ job, onOpen, folders }: { job: GenerationJob; onOpen: () =
           aria-pressed={job.is_archived}
           title={job.is_archived ? "Unarchive" : "Archive"}
         >
-          <span aria-hidden="true">🗄</span>
+          <ArchiveIcon size={14} />
         </button>
         <div className="queue-entry-folder-anchor" ref={folderPickerRef}>
           <button
@@ -221,7 +222,7 @@ function QueueEntry({ job, onOpen, folders }: { job: GenerationJob; onOpen: () =
             aria-haspopup="true"
             title="Add to folder"
           >
-            <span aria-hidden="true">📁</span>
+            <FolderIcon size={14} />
           </button>
           {folderPickerOpen && (
             <div className="folder-picker-popover">
@@ -485,7 +486,7 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
           onClick={() => setFiltersOpen((v) => !v)}
           aria-expanded={filtersOpen}
         >
-          <span aria-hidden="true">{filtersOpen ? "▾" : "▸"}</span> Filters
+          <ChevronDownIcon size={14} /> Filters
           {filtersActive && <span className="queue-filters-badge" title="Filters active" />}
         </button>
         {filtersActive && (
@@ -651,7 +652,7 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
                   onClick={() => toggleFolderCollapsed(folder.id)}
                   aria-expanded={!collapsed}
                 >
-                  <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> {folder.name}
+                  <ChevronDownIcon size={13} /> {folder.name}
                   <span className="queue-folder-group-count">{jobsInFolder.length}</span>
                 </button>
                 {!collapsed && (
@@ -675,7 +676,7 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
                     onClick={() => toggleFolderCollapsed(NO_FOLDER_KEY)}
                     aria-expanded={!collapsed}
                   >
-                    <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> No folder
+                    <ChevronDownIcon size={13} /> No folder
                     <span className="queue-folder-group-count">{folderGroups.noFolder.length}</span>
                   </button>
                   {!collapsed && (
