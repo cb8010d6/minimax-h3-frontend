@@ -182,10 +182,11 @@ main {
 .empty-state {
   color: var(--text);
   font-size: 14px;
+  line-height: 1.5;
   text-align: center;
-  padding: 24px 16px;
+  padding: 28px 16px;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 /* Buttons & form controls */
@@ -739,7 +740,12 @@ select {
 /* Queue sidebar */
 
 .queue-sidebar {
-  flex: 0 0 300px;
+  /* Widened from 300px -- the meta row (status/time/id/folder badge/quality)
+     was tight enough to truncate the quality label via ellipsis even in
+     ordinary cases; this gives it enough room to sit on one line unclipped
+     for most preset labels without needing to shrink queue-entry content
+     further. */
+  flex: 0 0 340px;
   min-width: 0;
   border-left: 1px solid var(--border);
   padding-left: 24px;
@@ -792,53 +798,107 @@ select {
   gap: 8px;
 }
 
+/* The card itself: queue-entry-button (thumb + text, the click-to-open
+   target) and queue-entry-action-bar (favorite/archive/folder, stacked)
+   sit side by side as two flex children -- the border/radius/hover chrome
+   lives here on the shared container, not on the button, so the two halves
+   read as one card instead of a button next to a floating overlay. */
 .queue-entry {
-  /* Anchors .queue-entry-quick-actions -- a sibling of queue-entry-button
-     (not nested inside it, since a <button> can't legally contain
-     another), positioned over its thumbnail corner. */
+  /* No overflow:hidden here (would be the obvious way to clip the action
+     bar's square corners to this card's rounded shape) -- the folder
+     button's popover is an absolutely-positioned descendant that opens
+     *below* this row, and overflow:hidden would clip it into invisibility
+     along with the corners. The two end buttons get their own explicit
+     border-radius instead (see .queue-entry-action-favorite/-folder). */
   position: relative;
-}
-
-.queue-entry-quick-actions {
-  position: absolute;
-  top: 5px;
-  left: 5px;
-  z-index: 1;
   display: flex;
-  gap: 3px;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.15s ease, box-shadow 0.2s ease, transform 0.15s ease, background-color 0.15s ease;
 }
 
-.queue-entry-quick-action {
-  width: 19px;
-  height: 19px;
+.queue-entry:hover {
+  border-color: var(--accent-border);
+  background: var(--social-bg);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+
+/* See the className comment in QueueSidebar.tsx's QueueEntry -- lifts this
+   row above its siblings' default stacking level so its (locally-trapped,
+   see above) popover isn't painted over by the next row down. */
+.queue-entry-popover-open {
+  z-index: 2;
+}
+
+.queue-entry:has(.queue-entry-button:active) {
+  transform: translateY(0);
+}
+
+/* Narrow stacked strip replacing the old floating circular icons over the
+   thumbnail's corner -- each button gets an even third of the row's full
+   height instead of a small fixed-size circle, and the strip's own left
+   edge is tinted with the prompt-color marker (see promptColor.ts) that
+   used to be a separate thin bar on the far right, so the color coding and
+   the actions read as one element. */
+.queue-entry-action-bar {
+  display: flex;
+  flex-direction: column;
+  width: 28px;
+  flex-shrink: 0;
+  border-left: 3px solid var(--border); /* overridden per-row via inline style, see promptColor() */
+}
+
+.queue-entry-action-button {
+  flex: 1 1 0;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: 50%;
-  background: rgba(20, 20, 24, 0.6);
-  color: #fff;
-  font-size: 11px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.queue-entry-quick-action:hover {
-  background: rgba(20, 20, 24, 0.85);
-  transform: scale(1.12);
+/* Dividers between the three stacked buttons -- targeted by class rather
+   than :first-child, since the folder button (see .queue-entry-folder-anchor)
+   sits inside its own wrapper div and so isn't its parent's :first-child
+   the way favorite/archive are. */
+.queue-entry-action-archive,
+.queue-entry-action-folder {
+  border-top: 1px solid var(--border);
 }
 
-.queue-entry-quick-action-favorite[aria-pressed="true"] {
+/* Matches .queue-entry's own 10px radius on its two right corners (~1px
+   less to sit just inside the card's own border) -- see .queue-entry's
+   comment on why this isn't done via overflow:hidden instead. */
+.queue-entry-action-favorite {
+  border-top-right-radius: 9px;
+}
+
+.queue-entry-action-folder {
+  border-bottom-right-radius: 9px;
+}
+
+.queue-entry-action-button:hover {
+  background: var(--code-bg);
+  color: var(--text-h);
+}
+
+.queue-entry-action-favorite[aria-pressed="true"] {
   background: #e0355f;
-  border-color: #e0355f;
+  color: #fff;
 }
 
-.queue-entry-quick-action-archive[aria-pressed="true"] {
+.queue-entry-action-archive[aria-pressed="true"] {
   background: var(--accent);
-  border-color: var(--accent);
+  color: #fff;
 }
 
 .queue-filters-header {
@@ -872,6 +932,17 @@ select {
   border-radius: 50%;
   background: var(--accent);
   display: inline-block;
+}
+
+/* Wraps .queue-filters + .folder-manage below into one visually distinct
+   cluster (moderate visual-polish pass) -- previously the filter controls
+   just floated directly in the sidebar with no boundary of their own. */
+.queue-filters-panel {
+  padding: 12px;
+  margin: 0 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--social-bg);
 }
 
 .queue-filters {
@@ -909,25 +980,292 @@ select {
   margin: 0 0 8px;
 }
 
+/* Folder management (inline "+ New folder" / rename / delete), inside
+   .queue-filters-panel -- see QueueSidebar.tsx. */
+.folder-manage {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.folder-manage-heading {
+  display: block;
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.folder-manage-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.folder-manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.folder-manage-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-h);
+}
+
+.folder-manage-count {
+  opacity: 0.65;
+}
+
+.folder-manage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.folder-manage-rename-input {
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.folder-new-form {
+  display: flex;
+  gap: 6px;
+}
+
+.folder-new-form input {
+  font-size: 13px;
+  padding: 5px 8px;
+}
+
+.folder-new-form button {
+  font-size: 13px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+}
+
+/* Collapsible per-folder queue sections (grouped view, see QueueSidebar's
+   showGroupedByFolder) -- each is just a header button + its own .queue-list. */
+.queue-folder-group {
+  margin: 0 0 14px;
+}
+
+.queue-folder-group:last-child {
+  margin-bottom: 0;
+}
+
+.queue-folder-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-h);
+  background: none;
+  border: none;
+  padding: 4px 0;
+  margin: 0 0 8px;
+  cursor: pointer;
+}
+
+.queue-folder-group-header:hover {
+  color: var(--accent);
+}
+
+.queue-folder-group-count {
+  color: var(--text);
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+/* Folder chips -- FolderPicker.tsx's toggle buttons (JobModal, QueueEntry's
+   popover, GenerateScreen). The queue row itself shows a compact
+   .queue-entry-folder-badge instead of these, not a row of name chips --
+   see that rule below. */
+.folder-chip {
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.folder-chip:hover {
+  border-color: var(--accent-border);
+  color: var(--text-h);
+}
+
+.folder-chip-active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* Compact stand-in for the full folder-chip list on each queue row -- a
+   folder emoji + count, full names available via `title` on hover. Lives
+   inline in .queue-entry-status-time rather than its own row (a dedicated
+   row of name chips used to add a whole extra line of height per foldered
+   job, which added up fast across a long list of variants). */
+.queue-entry-folder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+}
+
+/* GenerateScreen's pre-queue folder picker -- same .folder-picker chip-toggle
+   UI as JobModal/QueueEntry, just not inside a popover or <dl>. */
+.generate-folders {
+  margin: 0 0 16px;
+}
+
+.generate-folders-label {
+  display: block;
+  margin: 0 0 6px;
+}
+
+.folder-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.folder-picker-empty-hint {
+  margin: 0;
+  align-self: center;
+}
+
+/* Trailing "+" chip (see FolderPicker.tsx) + its own small name-entry
+   popover -- position:relative anchor so the popover works regardless of
+   whether FolderPicker itself is already inside another popover (QueueEntry)
+   or a modal (JobModal) or plain page flow (GenerateScreen). */
+.folder-add-anchor {
+  position: relative;
+}
+
+.folder-chip-add {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.folder-chip-add:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.folder-add-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.folder-add-popover form {
+  display: flex;
+  gap: 6px;
+}
+
+.folder-add-popover input {
+  font-size: 13px;
+  padding: 5px 8px;
+  width: 160px;
+}
+
+.folder-add-popover button {
+  font-size: 13px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+}
+
+/* Per-row folder quick action + its popover -- last button in the
+   .queue-entry-action-bar strip, anchored via its own position:relative
+   wrapper so the popover below can position against just this button. */
+.queue-entry-folder-anchor {
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+}
+
+.queue-entry-action-folder-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.folder-picker-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* Right-aligned (not left:0): the folder button now lives in the action
+     bar at the row's own right edge, so a left-aligned popover would run
+     off the sidebar's right edge/scrollbar. */
+  right: 0;
+  z-index: 5;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
 .queue-entry-button {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: left;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 7px 10px;
+  border: none;
   background: transparent;
   cursor: pointer;
   color: inherit;
   font: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.queue-entry-button:hover {
-  border-color: var(--accent-border);
-  box-shadow: var(--shadow);
 }
 
 .queue-entry-thumb {
@@ -960,6 +1298,12 @@ select {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* The root's 145% line-height (tuned for 18px prose, see index.css) left
+     a surprising amount of empty space above/below each of this 12-14px
+     row's two text lines once they stopped wrapping to more lines --
+     tightened here rather than globally, since prose elsewhere still wants
+     the roomier default. */
+  line-height: 1.3;
 }
 
 .queue-entry-title {
@@ -971,20 +1315,24 @@ select {
 }
 
 .queue-entry-meta {
+  /* nowrap (not wrap): .queue-entry-quality below truncates with an
+     ellipsis instead of wrapping to its own line when the row is tight --
+     a long preset label used to push every row a full line taller. */
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 8px;
   font-size: 12px;
   color: var(--text);
+  min-width: 0;
 }
 
 .queue-entry-status-time {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 8px;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .queue-entry-time {
@@ -998,9 +1346,11 @@ select {
 
 .queue-entry-quality {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text);
   opacity: 0.75;
-  flex-shrink: 0;
+  min-width: 0;
   margin-left: auto;
 }
 
@@ -1009,22 +1359,6 @@ select {
 .queue-entry-quality-turbo {
   color: var(--accent);
   opacity: 1;
-}
-
-/* Right-edge color line per row: hue derived from the job's prompt hash
-   (see QueueSidebar.tsx / promptColor.ts) -- a few px of color so the same
-   prompt (or a re-render of it) is visually findable in a long list.
-   pointer-events: none keeps it from eating clicks on the row button
-   beneath. */
-.queue-entry-prompt-color {
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  right: 4px;
-  width: 4px;
-  border-radius: 2px;
-  opacity: 0.85;
-  pointer-events: none;
 }
 
 .job-progress {
