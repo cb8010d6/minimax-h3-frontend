@@ -38,7 +38,9 @@ entrypoint via Docker Compose.
   drafting prompts, if you point it at an OpenAI-compatible LLM endpoint
 - **Invite-only accounts** — no open signup; log in via your own OIDC
   provider, or via admin-issued invite links
-- **A per-job history** — every past render, with download/delete/redo
+- **A per-job history** — every past render, with download/delete/redo; select
+  successful standalone videos in the queue to order them and create or extend
+  a Director timeline without re-rendering
 - **Steam Deck start video export** — a "Steam Deck video" action in a
   finished video job's "⋯ More" menu converts it to the 1280×800 VP9+Opus
   WebM format Steam Deck's custom startup-video replacement needs; pick

@@ -794,7 +794,12 @@ single `GenerationJob`-backed render, positioned by `order`.
   `director/media_views.py`, and (if it should count toward a project's
   storage) nowhere else today — see the `generation/media_views.py`
   gotcha in `AGENTS.md` for what happens when this is forgotten.
-- **Frontend** — `frontend/src/features/director/`: `ProjectListScreen`
+- **Frontend** — the main queue's `QueueSidebar` also has an opt-in history
+  selection mode: it exposes only successful standalone video jobs, records
+  the user's explicit order, and sends that ordered list to
+  `from_jobs/` (new project) or `projects/<id>/import_jobs/` (append to an
+  existing project), reusing the finished media without another render.
+  `frontend/src/features/director/`: `ProjectListScreen`
   (per-project rename/delete inline on each card, plus a `clip_count`/
   `dirty_count`/`active_count`/`eta_seconds` progress summary from the
   list endpoint's annotated queryset — see `projects()`'s GET — polling
