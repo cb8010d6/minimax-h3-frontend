@@ -1,13 +1,4 @@
-"""Cross-user queue ETA estimation, per features.md item 5.
-
-Deliberately returns only aggregates/derived timestamps -- never other
-users' individual job details -- since "should not show queue details from
-other users, just a combined estimated finished time." expected_finish_times()
-computes a real per-job number, but generation/api.py only ever attaches it
-to the requesting user's own jobs when serializing a response; the dict
-itself covers every user's active jobs since the FIFO order (and therefore
-each job's timing) genuinely depends on all of them, not just one user's.
-"""
+"""Privacy-preserving queue ETA estimation for the dynamic GPU pool."""
 
 from __future__ import annotations
 
@@ -15,32 +6,50 @@ from datetime import datetime, timedelta
 
 from django.utils import timezone
 
-from .models import GenerationJob
+from .models import GenerationJob, GpuWorker
 
-_ACTIVE_STATUSES = [GenerationJob.Status.QUEUED, GenerationJob.Status.PROCESSING]
+def _remaining_finish(job: GenerationJob, now: datetime) -> datetime:
+    if job.started_at:
+        return max(now, job.started_at + timedelta(seconds=job.estimated_seconds))
+    return now + timedelta(seconds=job.estimated_seconds)
+
+
+def _schedule() -> tuple[datetime, list[datetime], dict[int, datetime]]:
+    """List-schedule queued jobs across currently usable physical GPUs."""
+    now = timezone.now()
+    processing = list(
+        GenerationJob.objects.filter(status=GenerationJob.Status.PROCESSING)
+        .select_related("assigned_worker")
+        .order_by("created_at", "id")
+    )
+    queued = list(
+        GenerationJob.objects.filter(status=GenerationJob.Status.QUEUED).order_by(
+            "created_at", "id"
+        )
+    )
+    slots = [_remaining_finish(job, now) for job in processing]
+    idle_count = GpuWorker.objects.filter(
+        current_job__isnull=True,
+        state__in=[GpuWorker.State.FREE, GpuWorker.State.STANDBY, GpuWorker.State.READY],
+    ).count()
+    slots.extend([now] * idle_count)
+
+    # Before the first inventory/migration, retain the old single-worker ETA.
+    if not slots:
+        slots = [now]
+
+    result = {job.id: _remaining_finish(job, now) for job in processing}
+    for job in queued:
+        slot_index = min(range(len(slots)), key=slots.__getitem__)
+        slots[slot_index] = slots[slot_index] + timedelta(seconds=job.estimated_seconds)
+        result[job.id] = slots[slot_index]
+    return now, slots, result
 
 
 def estimated_seconds_ahead() -> int:
-    """Sum of estimated_seconds for every job still queued or processing,
-    system-wide. Adding a new job's own estimated_seconds to this gives the
-    ETA to show before the user confirms queuing it.
-
-    The PROCESSING job (there's at most one, see tasks.py) has already burned
-    some of its own estimated_seconds since started_at -- counting its full
-    estimate here would overstate the backlog by however much of it has
-    already elapsed (e.g. a 14min job 12min in would still show a 14min
-    backlog instead of ~2min).
-    """
-    total = 0
-    for job in GenerationJob.objects.filter(status__in=_ACTIVE_STATUSES).only(
-        "status", "started_at", "estimated_seconds"
-    ):
-        if job.status == GenerationJob.Status.PROCESSING and job.started_at:
-            elapsed = (timezone.now() - job.started_at).total_seconds()
-            total += max(0, job.estimated_seconds - elapsed)
-        else:
-            total += job.estimated_seconds
-    return round(total)
+    """Seconds until a newly appended job could start on the first GPU."""
+    now, slots, _ = _schedule()
+    return round(max(0.0, (min(slots) - now).total_seconds()))
 
 
 def estimated_finish_time(additional_seconds: int):
@@ -48,27 +57,5 @@ def estimated_finish_time(additional_seconds: int):
 
 
 def expected_finish_times() -> dict[int, datetime]:
-    """Per-job expected finish time for every job still queued/processing,
-    system-wide, walked in the same FIFO order tasks.process_queue()'s
-    _claim_next_job() claims them in (created_at, id) -- a PROCESSING job
-    (there's at most one, by construction, see tasks.py) is always the
-    oldest active job, so a plain created_at/id ordering already puts it
-    first without needing to special-case it in the query.
-
-    Each job's expected finish is the previous job's expected finish plus
-    its own estimated_seconds; the PROCESSING job's expected finish is its
-    own started_at plus estimated_seconds (rather than chaining off "now",
-    since it already started).
-    """
-    jobs = list(
-        GenerationJob.objects.filter(status__in=_ACTIVE_STATUSES).order_by("created_at", "id")
-    )
-    cursor = timezone.now()
-    result: dict[int, datetime] = {}
-    for job in jobs:
-        if job.status == GenerationJob.Status.PROCESSING and job.started_at:
-            cursor = job.started_at + timedelta(seconds=job.estimated_seconds)
-        else:
-            cursor = cursor + timedelta(seconds=job.estimated_seconds)
-        result[job.id] = cursor
-    return result
+    """Estimated completion time for each active job without exposing peers."""
+    return _schedule()[2]

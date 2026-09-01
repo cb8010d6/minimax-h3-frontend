@@ -117,6 +117,69 @@ class JobFolder(models.Model):
         return self.name
 
 
+class ModelVariant(models.TextChoices):
+    FP8 = "fp8", "FP8"
+    INT8 = "int8", "INT8"
+
+
+class ResolutionPolicy(models.TextChoices):
+    FIXED_MEGAPIXELS = "fixed", "Fixed megapixels"
+    H3_NATIVE = "h3_native", "MiniMax H3 native canvas"
+
+
+class GpuWorker(models.Model):
+    """One physical GPU discovered on gpu01/gpu02.
+
+    Rows are inventory, not a reservation list: every detected GPU is eligible.
+    The scheduler only leases a row after the remote host reports that no
+    unmanaged compute process is using that physical GPU.
+    """
+
+    class State(models.TextChoices):
+        OFFLINE = "offline", "Offline"
+        FREE = "free", "Free"
+        STANDBY = "standby", "Standby"
+        STARTING = "starting", "Starting"
+        READY = "ready", "Model ready"
+        BUSY = "busy", "Busy"
+        EXTERNAL = "external", "Busy by another process"
+        ERROR = "error", "Error"
+
+    host = models.CharField(max_length=64)
+    cuda_index = models.PositiveSmallIntegerField()
+    gpu_uuid = models.CharField(max_length=96, unique=True)
+    name = models.CharField(max_length=128, blank=True, default="")
+    port = models.PositiveIntegerField()
+    state = models.CharField(max_length=16, choices=State.choices, default=State.OFFLINE)
+    managed_pid = models.PositiveIntegerField(null=True, blank=True)
+    loaded_model = models.CharField(max_length=32, blank=True, default="")
+    memory_used_mb = models.PositiveIntegerField(default=0)
+    memory_total_mb = models.PositiveIntegerField(default=0)
+    utilization_percent = models.PositiveSmallIntegerField(default=0)
+    current_job = models.OneToOneField(
+        "GenerationJob",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="leased_worker",
+    )
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["host", "cuda_index"]
+        constraints = [
+            models.UniqueConstraint(fields=["host", "cuda_index"], name="unique_gpu_host_index")
+        ]
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    def __str__(self) -> str:
+        return f"{self.host}:GPU{self.cuda_index} ({self.state})"
+
 class RenderPreset(models.Model):
     """Admin-editable (mode, megapixels, steps) "quality tier" -- the first of
     two axes that together determine render time (the other is
@@ -144,6 +207,12 @@ class RenderPreset(models.Model):
     mode = models.CharField(max_length=8, choices=Mode.choices)
     label = models.CharField(max_length=60, help_text='e.g. "Draft", "Standard", "High quality".')
     megapixels = models.FloatField(help_text="Target pixel count for this tier, in megapixels.")
+    resolution_policy = models.CharField(
+        max_length=16,
+        choices=ResolutionPolicy.choices,
+        default=ResolutionPolicy.FIXED_MEGAPIXELS,
+        help_text="Fixed megapixel target or the aspect-dependent native H3 maximum canvas.",
+    )
     steps = models.PositiveIntegerField(default=20, help_text="Sampler steps (BasicScheduler.steps).")
     is_draft = models.BooleanField(
         default=False,
@@ -194,9 +263,9 @@ class RenderDuration(models.Model):
 
 class GenerationJob(models.Model):
     class Status(models.TextChoices):
-        """Jobs are processed strictly one at a time, FIFO (see tasks.py's
-        process_queue()), so there's no need to distinguish "running" from
-        "about to run" the way a parallel-worker model would. DONE covers
+        """Jobs run concurrently up to the number of leased idle GPUs.
+
+        DONE covers
         both success and failure -- check error_message/video_file to tell
         them apart (a real terminal FAILED state can come back later if
         that distinction needs to be first-class again). CANCELLED is its
@@ -289,6 +358,20 @@ class GenerationJob(models.Model):
         "step count its LoRA was trained for. Does NOT adjust estimated_seconds above -- "
         "same reasoning as use_spectrum.",
     )
+    model_variant = models.CharField(
+        max_length=8,
+        choices=ModelVariant.choices,
+        default=ModelVariant.FP8,
+        help_text="MiniMax H3 quantization selected by the user for this render.",
+    )
+    assigned_worker = models.ForeignKey(
+        GpuWorker,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="jobs",
+        help_text="Physical GPU leased for this job; null while queued.",
+    )
 
     class Phase(models.TextChoices):
         """Sub-state of a PROCESSING job, per ComfyUI's own three-stage
@@ -330,9 +413,9 @@ class GenerationJob(models.Model):
         "another, is what actually writes Status.CANCELLED.",
     )
 
-    # Unused since the switch to tasks.process_queue(): one shared Django-Q2
-    # task now works through the whole FIFO queue rather than one task per
-    # job, so there's no single task id to attribute to a given job anymore.
+    # Unused since the switch to tasks.process_queue(): workers claim the
+    # oldest available job at execution time, so the async task id created by
+    # an API request is not guaranteed to execute that same job.
     q_task_id = models.CharField(max_length=64, blank=True, default="")
 
     # ComfyUI-side identifiers, see resources/COMFYUI_API_GUIDE.md.
@@ -404,6 +487,12 @@ class ReferenceAsset(models.Model):
             )
         )
         position = same_kind_ids.index(self.id) + 1 if self.id in same_kind_ids else 1
+        # MiniMax H3 presents reference-video soundtracks before standalone
+        # audio, and audio ordinals are shared across both groups. Because
+        # every uploaded reference video is wired with its audio output, the
+        # first standalone audio is <Audio (video_count + 1)>, not Audio 1.
+        if self.kind == self.Kind.AUDIO:
+            position += self.job.references.filter(kind=self.Kind.VIDEO).count()
         return f"{kind_labels[self.kind]} {position}"
 
 

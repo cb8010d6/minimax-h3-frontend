@@ -80,7 +80,10 @@ def compute_resolution(megapixels: float, aspect_ratio: str) -> tuple[int, int]:
     w_ratio_str, h_ratio_str = aspect_ratio.split(":")
     w_ratio, h_ratio = float(w_ratio_str), float(h_ratio_str)
 
-    target_pixels = megapixels * 1_000_000
+    # ComfyUI's ResolutionSelector defines one megapixel as 1024 * 1024
+    # pixels. Keep this byte-for-byte equivalent to the installed node so
+    # the preview and the submitted workflow can never disagree.
+    target_pixels = megapixels * 1024 * 1024
     height = (target_pixels * h_ratio / w_ratio) ** 0.5
     width = height * (w_ratio / h_ratio)
 
@@ -88,3 +91,36 @@ def compute_resolution(megapixels: float, aspect_ratio: str) -> tuple[int, int]:
         return max(RESOLUTION_MULTIPLE, round(value / RESOLUTION_MULTIPLE) * RESOLUTION_MULTIPLE)
 
     return round_to_multiple(width), round_to_multiple(height)
+
+
+H3_NATIVE_SHORT_EDGE = 768
+H3_NATIVE_MAX_PIXELS = 768 * 1344
+
+
+def compute_h3_native_resolution(aspect_ratio: str) -> tuple[int, int]:
+    """Replicate MiniMax H3's official ``adapt_canvas`` helper.
+
+    The native canvas starts at a 768px short edge, is scaled down when its
+    area would exceed 768*1344, then each axis is rounded independently to a
+    multiple of 32. This is why 16:9 is exactly 1344x768, while square is
+    768x768 and other aspect ratios have their own exact native maximum.
+    """
+    w_ratio_str, h_ratio_str = aspect_ratio.split(":")
+    ratio = float(w_ratio_str) / float(h_ratio_str)
+    if ratio >= 1:
+        nominal_width = H3_NATIVE_SHORT_EDGE * ratio
+        nominal_height = H3_NATIVE_SHORT_EDGE
+    else:
+        nominal_width = H3_NATIVE_SHORT_EDGE
+        nominal_height = H3_NATIVE_SHORT_EDGE / ratio
+
+    area = nominal_width * nominal_height
+    if area > H3_NATIVE_MAX_PIXELS:
+        scale = (H3_NATIVE_MAX_PIXELS / area) ** 0.5
+        nominal_width *= scale
+        nominal_height *= scale
+
+    def round_to_multiple(value: float) -> int:
+        return max(RESOLUTION_MULTIPLE, round(value / RESOLUTION_MULTIPLE) * RESOLUTION_MULTIPLE)
+
+    return round_to_multiple(nominal_width), round_to_multiple(nominal_height)

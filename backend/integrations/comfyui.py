@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -49,8 +51,21 @@ class ComfyUIOutput:
     type: str
 
 
+_base_url_override: ContextVar[str | None] = ContextVar("comfyui_base_url_override", default=None)
+
+
 def _base_url() -> str:
-    return settings.COMFYUI_BASE_URL.rstrip("/")
+    return (_base_url_override.get() or settings.COMFYUI_BASE_URL).rstrip("/")
+
+
+@contextmanager
+def use_base_url(base_url: str):
+    """Route all ComfyUI calls in this context to one leased GPU worker."""
+    token = _base_url_override.set(base_url)
+    try:
+        yield
+    finally:
+        _base_url_override.reset(token)
 
 
 def _request_timeout() -> float:
@@ -344,10 +359,9 @@ def cancel_prompt(prompt_id: str) -> None:
     generation/api.py's cancel_job(). Tries both ways a prompt can need
     stopping: POST /queue {"delete": [prompt_id]} dequeues it if it hasn't
     started executing yet, POST /interrupt stops whatever ComfyUI is
-    *currently* executing. Calling /interrupt unconditionally (it takes no
-    prompt_id) is safe here specifically because Q_CLUSTER_WORKERS=1 means
-    at most one prompt is ever in flight system-wide -- there's no risk of
-    it interrupting some other job.
+    *currently* executing. Calling /interrupt is safe because callers scope
+    this client to the cancelled job's leased per-GPU ComfyUI process, where
+    at most that one render can be executing.
 
     Swallows its own errors -- this runs from an interactive cancel
     request, and generation.tasks._execute_job()'s own wait loop (polling

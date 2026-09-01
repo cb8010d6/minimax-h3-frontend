@@ -40,12 +40,15 @@ from integrations import comfyui, llm, media_post, motion_context, turbo
 
 logger = logging.getLogger(__name__)
 
+from . import gpu_scheduler
 from .models import (
     CONTENT_TYPE_BY_MODE,
     ContentType,
     GenerationJob,
     JobFolder,
+    GpuWorker,
     Mode,
+    ModelVariant,
     PromptChatMessage,
     PromptChatSession,
     REFERENCE_FLOW_MODES,
@@ -53,18 +56,97 @@ from .models import (
     RenderDuration,
     RenderPreset,
 )
+from .model_capabilities import (
+    ModelCapabilityError,
+    capability_for,
+    is_duration_supported,
+    resolve_resolution,
+)
 from .queue import estimated_seconds_ahead, expected_finish_times
+from .reference_tokens import invalid_reference_tokens
 from .resolution import (
     ASPECT_RATIO_VALUES,
     ASPECT_RATIOS,
     DEFAULT_ASPECT_RATIO,
-    compute_resolution,
     is_valid_aspect_ratio,
 )
 
 
 class HealthResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
+
+
+class ResolutionPreviewResponseSerializer(serializers.Serializer):
+    width = serializers.IntegerField()
+    height = serializers.IntegerField()
+    aspect_ratio = serializers.CharField()
+    preset_id = serializers.IntegerField()
+    resolution_policy = serializers.CharField()
+    actual_megapixels = serializers.FloatField()
+    native_max_width = serializers.IntegerField()
+    native_max_height = serializers.IntegerField()
+    min_duration_seconds = serializers.FloatField()
+    max_duration_seconds = serializers.FloatField()
+
+
+def _serialize_worker(worker: GpuWorker) -> dict:
+    active_model = ""
+    if worker.current_job_id:
+        # loaded_model deliberately remains proof that a prompt completed on
+        # this exact process.  While a job is still preparing/rendering, expose
+        # its requested model separately so the UI does not claim that a busy,
+        # VRAM-heavy worker has no model loaded.
+        active_model = gpu_scheduler.model_key(
+            worker.current_job.mode,
+            worker.current_job.model_variant,
+        )
+    return {
+        "id": worker.id,
+        "host": worker.host,
+        "cuda_index": worker.cuda_index,
+        "gpu_uuid": worker.gpu_uuid,
+        "name": worker.name,
+        "state": worker.state,
+        "port": worker.port,
+        "loaded_model": worker.loaded_model,
+        "active_model": active_model,
+        "memory_used_mb": worker.memory_used_mb,
+        "memory_total_mb": worker.memory_total_mb,
+        "utilization_percent": worker.utilization_percent,
+        "current_job_id": worker.current_job_id,
+        "last_seen_at": worker.last_seen_at,
+        "last_error": worker.last_error,
+    }
+
+
+@api_view(["GET"])
+def gpu_workers(request):
+    workers = GpuWorker.objects.select_related("current_job").all()
+    return Response([_serialize_worker(worker) for worker in workers])
+
+
+@api_view(["POST"])
+def gpu_prewarm(request):
+    family = str(request.data.get("family", "")).lower()
+    variant = str(request.data.get("model_variant", "")).lower()
+    if family not in {"fl2va", "ref2va"} or variant not in ModelVariant.values:
+        return Response({"error": "family must be fl2va/ref2va and model_variant fp8/int8."}, status=400)
+    if f"{family}:{variant}" not in settings.GPU_AVAILABLE_MODELS:
+        return Response({"error": "That model is not installed on this deployment."}, status=409)
+    task_id = async_task("generation.gpu_scheduler.prewarm", family, variant)
+    return Response({"status": "scheduled", "task_id": task_id}, status=202)
+
+
+@api_view(["POST"])
+def gpu_unload(request):
+    try:
+        worker = GpuWorker.objects.get(pk=int(request.data.get("worker_id")))
+        gpu_scheduler.unload_worker(worker)
+    except (TypeError, ValueError, GpuWorker.DoesNotExist):
+        return Response({"error": "A valid worker_id is required."}, status=400)
+    except RuntimeError as exc:
+        return Response({"error": str(exc)}, status=409)
+    return Response(_serialize_worker(GpuWorker.objects.get(pk=worker.pk)))
 
 
 class AspectRatioSerializer(serializers.Serializer):
@@ -94,6 +176,13 @@ class ConfigResponseSerializer(serializers.Serializer):
         "megapixels -- see RenderPreset -- so it isn't part of the preset/duration catalog).",
     )
     default_aspect_ratio = serializers.CharField(help_text="Value to preselect -- see aspect_ratios.")
+    available_model_keys = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Installed family/quantization pairs, e.g. ref2va:fp8.",
+    )
+    gpu_model_idle_seconds = serializers.IntegerField(
+        help_text="Idle seconds before a confirmed loaded model is automatically unloaded."
+    )
     spectrum_level = serializers.IntegerField(
         allow_null=True,
         help_text="settings.SPECTRUM_LEVEL: null (not offered), 0 (optional, default off), "
@@ -233,6 +322,7 @@ class RenderPresetSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(choices=Mode.choices)
     label = serializers.CharField()
     megapixels = serializers.FloatField(help_text="Determines render time, along with duration.")
+    resolution_policy = serializers.CharField()
     steps = serializers.IntegerField()
     is_draft = serializers.BooleanField()
     durations = RenderDurationSerializer(
@@ -296,6 +386,7 @@ class CreateJobRequestSerializer(serializers.Serializer):
     )
     raw_prompt = serializers.CharField()
     improved_prompt = serializers.CharField(required=False, allow_blank=True)
+    model_variant = serializers.ChoiceField(choices=ModelVariant.choices, default=ModelVariant.FP8)
     reference_images = serializers.ListField(
         child=serializers.FileField(),
         required=False,
@@ -396,6 +487,8 @@ class GenerationJobSerializer(serializers.Serializer):
         "true, this job's actual sampler step count was overridden from the chosen preset's "
         "own steps. estimated_seconds above does NOT account for the speedup."
     )
+    model_variant = serializers.ChoiceField(choices=ModelVariant.choices)
+    assigned_worker = serializers.DictField(allow_null=True)
     video_url = serializers.CharField(allow_null=True)
     thumbnail_url = serializers.CharField(
         allow_null=True,
@@ -409,8 +502,8 @@ class GenerationJobSerializer(serializers.Serializer):
     finished_at = serializers.DateTimeField(allow_null=True)
     expected_finish_time = serializers.DateTimeField(
         allow_null=True,
-        help_text="Only set while queued/processing -- computed by walking the FIFO queue "
-        "(see generation/queue.py::expected_finish_times()); null once done.",
+        help_text="Only set while queued/processing -- list-scheduled across currently usable "
+        "GPUs (see generation/queue.py); null once done.",
     )
     phase = serializers.ChoiceField(
         choices=GenerationJob.Phase.choices,
@@ -486,11 +579,72 @@ def config(request):
             "oidc_provider_name": oidc_apps[0]["name"] if oidc_apps else "OIDC",
             "aspect_ratios": [{"value": value, "label": label} for value, label in ASPECT_RATIOS],
             "default_aspect_ratio": DEFAULT_ASPECT_RATIO,
+            "available_model_keys": sorted(settings.GPU_AVAILABLE_MODELS),
+            "gpu_model_idle_seconds": settings.GPU_MODEL_IDLE_SECONDS,
             "spectrum_level": settings.SPECTRUM_LEVEL,
             "turbo_level": settings.TURBO_LEVEL,
             "turbo_steps_t2v_i2v": settings.TURBO_STEPS_T2V_I2V,
             "turbo_steps_r2v": settings.TURBO_STEPS_R2V,
             "director_full_continuity_available": motion_context.is_available(),
+        }
+    )
+
+
+@extend_schema(
+    summary="Preview the exact render resolution",
+    description=(
+        "Uses the same capability registry and resolution resolver as job creation, including "
+        "the MiniMax H3 native-canvas cap and 32-pixel rounding. The returned width/height are "
+        "therefore the exact values snapshotted onto a submitted job."
+    ),
+    responses={
+        200: ResolutionPreviewResponseSerializer,
+        400: OpenApiResponse(description="Invalid megapixels or aspect ratio."),
+    },
+    tags=["generation"],
+)
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def resolution_preview(request):
+    try:
+        preset_id = int(request.query_params.get("preset_id", ""))
+    except (TypeError, ValueError):
+        return Response({"error": "preset_id must be an integer"}, status=400)
+    aspect_ratio = request.query_params.get("aspect_ratio")
+    if not is_valid_aspect_ratio(aspect_ratio):
+        return Response({"error": "invalid aspect_ratio"}, status=400)
+    variant = str(request.query_params.get("model_variant", ModelVariant.FP8)).lower()
+    preset = RenderPreset.objects.filter(pk=preset_id, is_active=True).first()
+    if preset is None:
+        return Response({"error": "preset_id must reference an active preset"}, status=400)
+    try:
+        capability = capability_for(preset.mode, variant)
+        width, height = resolve_resolution(
+            mode=preset.mode,
+            megapixels=preset.megapixels,
+            resolution_policy=preset.resolution_policy,
+            aspect_ratio=aspect_ratio,
+        )
+        native_width, native_height = resolve_resolution(
+            mode=preset.mode,
+            megapixels=preset.megapixels,
+            resolution_policy="h3_native",
+            aspect_ratio=aspect_ratio,
+        )
+    except ModelCapabilityError as exc:
+        return Response({"error": str(exc)}, status=400)
+    return Response(
+        {
+            "width": width,
+            "height": height,
+            "aspect_ratio": aspect_ratio,
+            "preset_id": preset.id,
+            "resolution_policy": preset.resolution_policy,
+            "actual_megapixels": width * height / (1024 * 1024),
+            "native_max_width": native_width,
+            "native_max_height": native_height,
+            "min_duration_seconds": capability.min_duration_seconds,
+            "max_duration_seconds": capability.max_duration_seconds,
         }
     )
 
@@ -749,12 +903,14 @@ class RequeueJobRequestSerializer(serializers.Serializer):
     )
 
 
-def _serialize_preset(preset: RenderPreset) -> dict:
+def _serialize_preset(preset: RenderPreset, *, model_variant: str) -> dict:
+    capability = capability_for(preset.mode, model_variant)
     return {
         "id": preset.id,
         "mode": preset.mode,
         "label": preset.label,
         "megapixels": preset.megapixels,
+        "resolution_policy": preset.resolution_policy,
         "steps": preset.steps,
         "is_draft": preset.is_draft,
         "durations": [
@@ -764,6 +920,7 @@ def _serialize_preset(preset: RenderPreset) -> dict:
                 "estimated_render_seconds": d.estimated_render_seconds,
             }
             for d in preset.durations.filter(is_active=True)
+            if is_duration_supported(preset.mode, d.duration_seconds, capability)
         ],
     }
 
@@ -825,6 +982,16 @@ def _serialize_job(
         "estimated_seconds": job.estimated_seconds,
         "use_spectrum": job.use_spectrum,
         "use_turbo": job.use_turbo,
+        "model_variant": job.model_variant,
+        "assigned_worker": (
+            {
+                "id": job.assigned_worker_id,
+                "host": job.assigned_worker.host,
+                "cuda_index": job.assigned_worker.cuda_index,
+            }
+            if job.assigned_worker_id
+            else None
+        ),
         "video_url": job.video_file.url if job.video_file else None,
         "thumbnail_url": job.thumbnail_file.url if job.thumbnail_file else None,
         "created_at": job.created_at,
@@ -856,12 +1023,35 @@ def _serialize_job(
 @api_view(["GET"])
 def list_presets(request):
     mode = request.query_params.get("mode")
+    model_variant = str(request.query_params.get("model_variant", ModelVariant.FP8)).lower()
+    aspect_ratio = request.query_params.get("aspect_ratio", DEFAULT_ASPECT_RATIO)
+    if model_variant not in ModelVariant.values:
+        return Response({"error": "model_variant must be fp8 or int8."}, status=400)
+    if not is_valid_aspect_ratio(aspect_ratio):
+        return Response({"error": "invalid aspect_ratio"}, status=400)
     presets = RenderPreset.objects.filter(is_active=True).prefetch_related("durations")
     if mode:
         if mode not in Mode.values:
             return Response({"error": f"mode must be one of {Mode.values}"}, status=400)
         presets = presets.filter(mode=mode)
-    return Response([_serialize_preset(p) for p in presets])
+    result = []
+    for preset in presets:
+        if not gpu_scheduler.model_available(preset.mode, model_variant):
+            continue
+        try:
+            capability_for(preset.mode, model_variant)
+            resolve_resolution(
+                mode=preset.mode,
+                megapixels=preset.megapixels,
+                resolution_policy=preset.resolution_policy,
+                aspect_ratio=aspect_ratio,
+            )
+        except ModelCapabilityError:
+            continue
+        serialized = _serialize_preset(preset, model_variant=model_variant)
+        if serialized["durations"]:
+            result.append(serialized)
+    return Response(result)
 
 
 @extend_schema(
@@ -902,8 +1092,8 @@ def queue_estimate(request):
         "GET lists only the requesting user's own jobs (see generation/queue.py for the "
         "cross-user aggregate ETA instead). POST creates a GenerationJob (snapshotting the "
         "chosen preset's estimated_render_seconds) plus any attached image/audio references, and "
-        "enqueues generation.tasks.process_queue via Django-Q2 -- jobs are worked through "
-        "strictly one at a time, FIFO, see that module's docstring. Reference files are "
+        "enqueues generation.tasks.process_queue via Django-Q2 -- jobs lease separate idle "
+        "physical GPUs and excess work remains queued. Reference files are "
         "staged client-side (e.g. during AI-refine, see reference_labels on "
         "/api/prompt/refine/) and only actually uploaded here, atomically with job creation."
     ),
@@ -920,7 +1110,7 @@ def jobs(request):
     if request.method == "GET":
         queryset = (
             GenerationJob.objects.filter(user=request.user)
-            .select_related("preset", "duration")
+            .select_related("preset", "duration", "assigned_worker")
             .prefetch_related("references", "folders")
         )
         finish_times = expected_finish_times()
@@ -963,6 +1153,25 @@ def jobs(request):
     if not raw_prompt.strip():
         return Response({"error": "raw_prompt is required."}, status=400)
     improved_prompt = request.data.get("improved_prompt", "")
+    model_variant = str(request.data.get("model_variant", ModelVariant.FP8)).lower()
+    if model_variant not in ModelVariant.values:
+        return Response({"error": "model_variant must be fp8 or int8."}, status=400)
+    try:
+        capability = capability_for(mode, model_variant)
+    except ModelCapabilityError as exc:
+        return Response({"error": str(exc)}, status=400)
+    if not gpu_scheduler.model_available(mode, model_variant):
+        return Response({"error": "The selected model family is not installed."}, status=409)
+    if not is_duration_supported(mode, duration.duration_seconds, capability):
+        return Response(
+            {
+                "error": (
+                    f"{model_variant.upper()} supports {capability.min_duration_seconds:g}-"
+                    f"{capability.max_duration_seconds:g} seconds for this mode."
+                )
+            },
+            status=400,
+        )
 
     # None (not "false") means "the client didn't send this field at all" --
     # see _resolve_use_spectrum for why that distinction matters.
@@ -1033,7 +1242,69 @@ def jobs(request):
         if owned_ids != set(folder_ids):
             return Response({"error": "folder_ids must reference your own folders."}, status=400)
 
-    width, height = compute_resolution(preset.megapixels, aspect_ratio)
+    try:
+        width, height = resolve_resolution(
+            mode=mode,
+            megapixels=preset.megapixels,
+            resolution_policy=preset.resolution_policy,
+            aspect_ratio=aspect_ratio,
+        )
+    except ModelCapabilityError as exc:
+        return Response({"error": str(exc)}, status=400)
+
+    typed_reference_groups = [
+        (reference_images, "image/", "image"),
+        (reference_audio, "audio/", "audio"),
+        (reference_video, "video/", "video"),
+    ]
+    for files, content_type_prefix, label in typed_reference_groups:
+        invalid_names = [
+            file.name
+            for file in files
+            if not (file.content_type or "").lower().startswith(content_type_prefix)
+        ]
+        if invalid_names:
+            return Response(
+                {"error": f"Invalid {label} reference file type: {invalid_names[0]}"},
+                status=400,
+            )
+
+    for file in reference_video:
+        duration_seconds = media_post.probe_uploaded_duration(file)
+        if duration_seconds is None:
+            return Response(
+                {"error": f"Could not read reference video duration: {file.name}"},
+                status=400,
+            )
+        if not 2 <= duration_seconds <= 15:
+            return Response(
+                {
+                    "error": (
+                        f"Reference video {file.name} is {duration_seconds:.2f}s; "
+                        "MiniMax H3 supports 2-15s reference videos."
+                    )
+                },
+                status=400,
+            )
+
+    effective_prompt = improved_prompt or raw_prompt
+    invalid_tokens = invalid_reference_tokens(
+        effective_prompt,
+        image_count=len(reference_images),
+        video_count=len(reference_video),
+        audio_count=len(reference_audio),
+    )
+    if invalid_tokens:
+        return Response(
+            {
+                "error": (
+                    "Prompt contains invalid or unavailable reference token(s): "
+                    + ", ".join(invalid_tokens)
+                )
+            },
+            status=400,
+        )
+    actual_megapixels = width * height / (1024 * 1024)
 
     # Turbo is only useful at (or near) the step count its LoRA was trained
     # for, so it overrides the preset's own steps entirely rather than
@@ -1051,7 +1322,7 @@ def jobs(request):
             duration=duration,
             raw_prompt=raw_prompt,
             improved_prompt=improved_prompt,
-            megapixels=preset.megapixels,
+            megapixels=actual_megapixels,
             steps=steps,
             aspect_ratio=aspect_ratio,
             width=width,
@@ -1060,6 +1331,7 @@ def jobs(request):
             estimated_seconds=duration.estimated_render_seconds,
             use_spectrum=use_spectrum,
             use_turbo=use_turbo,
+            model_variant=model_variant,
         )
         if folder_ids:
             job.folders.set(folder_ids)
@@ -1087,10 +1359,9 @@ def jobs(request):
                 for m in chat_transcript
             )
 
-    # No job id passed -- process_queue() is a shared FIFO queue processor,
-    # not a per-job task (see generation/tasks.py). Safe to enqueue
-    # redundantly; a call that finds the queue already being worked through
-    # by an earlier trigger just no-ops.
+    # No job id passed -- process_queue() is a shared queue processor, not a
+    # per-job task. Redundant calls are protected by job/GPU row locks and
+    # return when no physical card can be leased.
     async_task("generation.tasks.process_queue")
 
     finish_time = expected_finish_times().get(job.id)
@@ -1132,7 +1403,7 @@ def jobs(request):
 @api_view(["GET", "DELETE", "PATCH"])
 def job_detail(request, job_id: int):
     job = get_object_or_404(
-        GenerationJob.objects.select_related("preset", "duration").prefetch_related("references", "folders"),
+        GenerationJob.objects.select_related("preset", "duration", "assigned_worker").prefetch_related("references", "folders"),
         id=job_id,
         user=request.user,
     )
@@ -1300,7 +1571,7 @@ def folder_detail(request, folder_id: int):
 def cancel_job(request, job_id: int):
     with transaction.atomic():
         job = get_object_or_404(
-            GenerationJob.objects.select_related("preset", "duration").select_for_update(),
+            GenerationJob.objects.select_related("preset", "duration", "assigned_worker").select_for_update(),
             id=job_id,
             user=request.user,
         )
@@ -1326,7 +1597,11 @@ def cancel_job(request, job_id: int):
     # _execute_job()'s own cancel_requested poll (see tasks.py) is what
     # actually finalizes the job's status either way.
     if job.comfyui_prompt_id:
-        comfyui.cancel_prompt(job.comfyui_prompt_id)
+        if job.assigned_worker_id:
+            with comfyui.use_base_url(job.assigned_worker.base_url):
+                comfyui.cancel_prompt(job.comfyui_prompt_id)
+        else:
+            comfyui.cancel_prompt(job.comfyui_prompt_id)
 
     return Response(_serialize_job(job, detail=True))
 

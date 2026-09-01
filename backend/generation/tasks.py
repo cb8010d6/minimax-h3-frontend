@@ -1,19 +1,13 @@
 """Django-Q2 task entry point for working through the GenerationJob queue.
 
 Registered by calling async_task("generation.tasks.process_queue") (no job
-id -- it's a shared queue processor, not a per-job task) whenever a job is
-created (see generation/api.py). process_queue() claims and runs jobs
-strictly one at a time, FIFO (oldest queued first), looping until the queue
-is empty -- this is what actually makes rendering serialized and ordered,
-*not* Django-Q2 itself: its ORM broker's dequeue query has no ORDER BY, so
-task pickup order isn't guaranteed, and multiple workers would happily run
-several jobs in parallel. FIFO/serialization here comes entirely from
-_claim_next_job()'s explicit `order_by("created_at", "id")` plus a DB row
-lock, combined with Q_CLUSTER_WORKERS=1 (config/settings.py) so only one
-process_queue loop -- and therefore only one _execute_job() call -- is ever
-running at a time. (The row lock alone only stops the same job being claimed
-twice; it does NOT stop two *different* jobs running in parallel if workers
-were ever bumped above 1 -- don't, without redesigning this.)
+id -- each invocation atomically claims at most one FIFO job) whenever a job
+is created (see generation/api.py). Multiple process_queue() calls may run in
+parallel. Each atomically claims the oldest unlocked queued job and then
+leases one unlocked, system-idle physical GPU through gpu_scheduler. This
+allows up to one render per available GPU while preventing two jobs from
+sharing a card. If every GPU is leased or occupied by an external compute
+process, the job remains queued until a worker is released.
 
 No LLM call happens here -- prompt refinement is an explicit pre-job user
 action (the "AI refine" button or the interactive chat, both in
@@ -43,7 +37,9 @@ from __future__ import annotations
 import json
 import logging
 import random
+import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +50,8 @@ from django.utils import timezone
 
 from integrations import comfyui, hooks, media_post, motion_context, spectrum, turbo, video_ref
 
-from .models import CONTENT_TYPE_BY_MODE, REFERENCE_FLOW_MODES, ContentType, GenerationJob, Mode, ReferenceAsset
+from . import gpu_scheduler
+from .models import CONTENT_TYPE_BY_MODE, REFERENCE_FLOW_MODES, ContentType, GenerationJob, Mode, ModelVariant, ReferenceAsset
 from .signals import job_finished
 
 logger = logging.getLogger(__name__)
@@ -172,6 +169,7 @@ def build_api_workflow(
     use_spectrum: bool = False,
     use_turbo: bool = False,
     continuation_params: dict[str, Any] | None = None,
+    model_variant: str = ModelVariant.FP8,
 ) -> dict[str, Any]:
     """Loads the mode's API-format template and patches in the given values.
 
@@ -192,6 +190,10 @@ def build_api_workflow(
     value when use_turbo is set -- see _build_workflow_for_job below.
     """
     workflow = _load_api_workflow(mode)
+    loaders = [node for node in workflow.values() if node.get("class_type") == "UNETLoader"]
+    if len(loaders) != 1:
+        raise RuntimeError(f"Expected exactly one UNETLoader, found {len(loaders)}")
+    loaders[0]["inputs"]["unet_name"] = gpu_scheduler.model_filename(mode, model_variant)
     nodes = _R2V_NODES if mode in REFERENCE_FLOW_MODES else _T2V_I2V_NODES
 
     sampler = workflow[nodes["sampler"]]["inputs"]
@@ -357,18 +359,12 @@ def _build_workflow_for_job(job: GenerationJob) -> dict[str, Any]:
         use_spectrum=job.use_spectrum,
         use_turbo=job.use_turbo,
         continuation_params=continuation_params,
+        model_variant=job.model_variant,
     )
 
 
 def _claim_next_job() -> GenerationJob | None:
-    """Atomically claims the oldest still-QUEUED job, system-wide, and marks
-    it PROCESSING -- the one place FIFO order and one-at-a-time-ness are
-    actually enforced (see module docstring). select_for_update(skip_locked)
-    means a concurrent claim attempt (only possible if Q_CLUSTER_WORKERS is
-    ever misconfigured above 1) skips this row rather than blocking on it --
-    it would then go claim a *different* row instead, which is exactly the
-    scenario that setting is what actually prevents, not this lock.
-    """
+    """Claim the oldest unlocked queued job only when a GPU can be leased."""
     with transaction.atomic():
         job = (
             GenerationJob.objects.select_for_update(skip_locked=True)
@@ -379,10 +375,13 @@ def _claim_next_job() -> GenerationJob | None:
         )
         if job is None:
             return None
+        worker = gpu_scheduler.lease_worker(job)
+        if worker is None:
+            return None
         job.status = GenerationJob.Status.PROCESSING
         job.started_at = timezone.now()
         job.phase = GenerationJob.Phase.PREPARING
-        job.save(update_fields=["status", "started_at", "phase"])
+        job.save(update_fields=["status", "started_at", "phase", "assigned_worker"])
     return job
 
 
@@ -520,37 +519,61 @@ def _execute_job(job: GenerationJob) -> None:
     process_queue()'s loop keeps working through the rest of the queue
     instead of aborting on the first failure.
     """
-    # See integrations/hooks.py -- e.g. waking a GPU/model server before the
-    # first render of the day. Runs (and, if configured, finishes) before
-    # anything below.
-    hooks.run_hook("PRE_RENDER_HOOK", job=job)
+    worker = job.assigned_worker
+    if worker is None:
+        _mark_job_failed(job, "Scheduler did not assign a GPU")
+        return
 
+    loaded_model = gpu_scheduler.model_key(job.mode, job.model_variant)
+    worker_started = False
+    model_confirmed = False
     try:
-        workflow = _build_workflow_for_job(job)
+        hooks.run_hook("PRE_RENDER_HOOK", job=job)
+        gpu_scheduler.ensure_started(worker)
+        worker_started = True
+        with comfyui.use_base_url(worker.base_url):
+            workflow = _build_workflow_for_job(job)
 
-        client_id = str(uuid.uuid4())
-        prompt_id = comfyui.queue_prompt(workflow, client_id)
-        job.comfyui_prompt_id = prompt_id
-        job.save(update_fields=["comfyui_prompt_id"])
+            client_id = str(uuid.uuid4())
+            prompt_id = comfyui.queue_prompt(workflow, client_id)
+            job.comfyui_prompt_id = prompt_id
+            job.save(update_fields=["comfyui_prompt_id"])
 
-        timeout = job.estimated_seconds * 3 + 300
-        cancel_check = lambda: _cancel_requested(job.id)  # noqa: E731
+            timeout = min(
+                job.estimated_seconds * 3 + 300,
+                settings.COMFYUI_MAX_RENDER_TIMEOUT,
+            )
+            deadline = time.monotonic() + timeout
+            cancel_check = lambda: _cancel_requested(job.id)  # noqa: E731
         # Best-effort live phase/progress (see comfyui.stream_execution_progress's
         # own docstring) -- swallows its own errors and simply returns early if
         # anything goes wrong, so a WebSocket hiccup never fails the job itself;
         # the actual result always still comes from wait_for_result()+
         # check_for_error() below, exactly as before this was added.
-        comfyui.stream_execution_progress(
-            prompt_id,
-            client_id,
-            _PROGRESS_SAMPLER_NODES[job.mode],
-            _progress_callback(job.id),
-            timeout=timeout,
-            cancel_check=cancel_check,
-        )
+            comfyui.stream_execution_progress(
+                prompt_id,
+                client_id,
+                _PROGRESS_SAMPLER_NODES[job.mode],
+                _progress_callback(job.id),
+                timeout=timeout,
+                cancel_check=cancel_check,
+            )
 
-        history_record = comfyui.wait_for_result(prompt_id, timeout=timeout, cancel_check=cancel_check)
-        _finish_job_from_history(job, history_record)
+            # The WebSocket progress stream and history poll share one wall-
+            # clock budget.  Giving each the full timeout could make one
+            # render outlive Django-Q's hard worker timeout even when each
+            # individual call looked correctly bounded.
+            remaining = max(1.0, deadline - time.monotonic())
+            history_record = comfyui.wait_for_result(
+                prompt_id,
+                timeout=remaining,
+                cancel_check=cancel_check,
+            )
+            _finish_job_from_history(job, history_record)
+            # A completed prompt is the evidence that the requested UNET
+            # really loaded on this process.  Merely starting ComfyUI or
+            # submitting the graph is not enough to advertise READY.
+            model_confirmed = True
 
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user via job.error_message
         # A real ComfyUI error and a cancel_job() request both land here
@@ -563,6 +586,19 @@ def _execute_job(job: GenerationJob) -> None:
             _mark_job_cancelled(job)
         else:
             _mark_job_failed(job, str(exc))
+    finally:
+        if worker_started:
+            cleanup_error = ""
+            try:
+                gpu_scheduler.cleanup_worker_cache(worker)
+            except Exception as exc:  # noqa: BLE001 - make cache failures visible and quarantine card
+                cleanup_error = f"GPU RAM cache cleanup failed: {exc}"
+                logger.exception("GPU RAM cache cleanup failed for worker %s", worker.id)
+            gpu_scheduler.release_worker(
+                worker,
+                loaded_model=loaded_model if model_confirmed and not cleanup_error else None,
+                error=cleanup_error,
+            )
 
     # job.status is always DONE (or CANCELLED) by this point either way (see
     # this function's own docstring) -- error_message set/blank distinguishes
@@ -585,15 +621,9 @@ def recover_orphaned_processing_jobs() -> None:
     forever, showing "Processing…" to its owner indefinitely (see
     ARCHITECTURE.md's Verification for the real report this came from).
 
-    Q_CLUSTER_WORKERS=1 (config/settings.py) means at most one job is ever
-    genuinely in flight, so any job still marked PROCESSING when this runs
-    is *necessarily* orphaned -- **but only at this function's two actual
-    call sites**: the top of process_queue() (before that same call's own
-    claim loop starts) and the recover_stale_jobs management command run
-    once at qcluster container startup (before its own task loop starts
-    consuming anything). Both are naturally serialized against a real
-    _execute_job() by the same Q_CLUSTER_WORKERS=1 mechanism that makes the
-    rest of this module's FIFO guarantee hold.
+    It is called only by recover_stale_jobs immediately before qcluster starts
+    consuming work. No local worker can still own a PROCESSING row at that
+    point, so all such rows are orphaned even with many concurrent workers.
 
     DO NOT call this (or _recover_one_orphaned_job) ad hoc against a live
     stack's real database -- e.g. from `manage.py shell` while qcluster is
@@ -615,11 +645,45 @@ def recover_orphaned_processing_jobs() -> None:
     explanatory error, freeing it from blocking anything -- once ComfyUI
     has no record of it at all.
     """
-    for job in GenerationJob.objects.filter(status=GenerationJob.Status.PROCESSING):
+    for job in GenerationJob.objects.select_related("assigned_worker").filter(
+        status=GenerationJob.Status.PROCESSING
+    ):
         _recover_one_orphaned_job(job)
 
 
 def _recover_one_orphaned_job(job: GenerationJob) -> None:
+    worker = job.assigned_worker
+    context = comfyui.use_base_url(worker.base_url) if worker else nullcontext()
+    try:
+        with context:
+            _recover_one_orphaned_job_on_worker(job)
+    finally:
+        if worker:
+            worker.refresh_from_db()
+            if worker.current_job_id == job.id:
+                cleanup_error = ""
+                try:
+                    gpu_scheduler.cleanup_worker_cache(worker)
+                except Exception as exc:  # noqa: BLE001
+                    cleanup_error = f"GPU RAM cache cleanup failed after recovery: {exc}"
+                    logger.exception("GPU RAM cache cleanup failed for recovered job %s", job.id)
+                model_confirmed = (
+                    job.status == GenerationJob.Status.DONE
+                    and bool(job.video_file)
+                    and not job.error_message
+                )
+                gpu_scheduler.release_worker(
+                    worker,
+                    loaded_model=(
+                        gpu_scheduler.model_key(job.mode, job.model_variant)
+                        if model_confirmed and not cleanup_error
+                        else None
+                    ),
+                    error=cleanup_error,
+                )
+
+
+def _recover_one_orphaned_job_on_worker(job: GenerationJob) -> None:
     if job.cancel_requested:
         # A cancel_job() request landed but the process (backend or
         # qcluster) restarted before _execute_job()'s own wait loop noticed
@@ -671,17 +735,15 @@ def _recover_one_orphaned_job(job: GenerationJob) -> None:
 
 
 def process_queue() -> None:
-    """Django-Q2 entry point (see module docstring). Recovers any job
-    orphaned by a previous restart (see recover_orphaned_processing_jobs),
-    then works through every currently-QUEUED job in FIFO order, one at a
-    time, until none remain. Enqueued redundantly -- once per job creation
-    -- which is fine: a call that finds nothing QUEUED (because an
-    already-running loop already claimed everything) just returns
-    immediately, and recovery itself is a no-op once nothing's orphaned.
+    """Django-Q2 entry point (see module docstring).
+
+    Processes at most one queued job. It is enqueued once per job creation,
+    and the scheduler also wakes one task per available GPU. Keeping one
+    render per Django-Q task prevents the task-level hard timeout from being
+    consumed cumulatively across several long videos. Redundant concurrent
+    calls remain safe because both job and GPU rows are claimed with locks.
     """
-    recover_orphaned_processing_jobs()
-    while True:
-        job = _claim_next_job()
-        if job is None:
-            return
+    gpu_scheduler.refresh_inventory()
+    job = _claim_next_job()
+    if job is not None:
         _execute_job(job)

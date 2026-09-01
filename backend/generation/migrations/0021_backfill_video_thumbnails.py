@@ -51,6 +51,11 @@ def backfill_thumbnails(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
+    # The command imports the current GenerationJob model, which can include
+    # fields introduced after this historical migration. A best-effort query
+    # failure must not poison the outer migration transaction on PostgreSQL.
+    atomic = False
+
     dependencies = [
         ('generation', '0020_generationjob_title_thumbnail'),
     ]

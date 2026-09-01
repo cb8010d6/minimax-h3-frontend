@@ -1,9 +1,8 @@
 """Run once at qcluster container startup (see docker-compose.yml's
 qcluster command) so a job orphaned by a previous restart -- see
 generation.tasks.recover_orphaned_processing_jobs()'s docstring -- gets
-recovered immediately, rather than sitting stuck until someone happens to
-queue a new job (process_queue() also calls this, but only runs when
-triggered by a job creation).
+recovered immediately. This command must run before qcluster starts, never
+beside live queue workers.
 """
 
 from django.core.management.base import BaseCommand

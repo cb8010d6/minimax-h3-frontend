@@ -15,6 +15,8 @@ tooltip calling that frame count "untested" (trained range ~124-362); a
 
 from __future__ import annotations
 
+import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,14 +28,33 @@ class FfmpegError(RuntimeError):
     pass
 
 
-def _run_ffmpeg(args: list[str], input_bytes: bytes, output_suffix: str, *, timeout: int = FFMPEG_TIMEOUT) -> bytes:
+def _ffmpeg_executable() -> str:
+    """Return a deployable ffmpeg executable without requiring root.
+
+    Production hosts may provide ffmpeg globally.  The admin-only deployment
+    deliberately does not rely on system packages, so its Python environment
+    carries imageio-ffmpeg as a user-space fallback.
+    """
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+    except ImportError as exc:  # pragma: no cover - dependency is locked in production
+        raise FfmpegError("ffmpeg is unavailable; install the backend dependencies") from exc
+    return get_ffmpeg_exe()
+
+
+def _run_ffmpeg(
+    args: list[str], input_bytes: bytes, output_suffix: str, *, timeout: int = FFMPEG_TIMEOUT
+) -> bytes:
     with tempfile.TemporaryDirectory() as tmp:
         in_path = Path(tmp) / "input.mp4"
         out_path = Path(tmp) / f"output{output_suffix}"
         in_path.write_bytes(input_bytes)
         try:
             result = subprocess.run(
-                ["ffmpeg", "-y", "-i", str(in_path), *args, str(out_path)],
+                [_ffmpeg_executable(), "-y", "-i", str(in_path), *args, str(out_path)],
                 capture_output=True,
                 timeout=timeout,
             )
@@ -42,6 +63,45 @@ def _run_ffmpeg(args: list[str], input_bytes: bytes, output_suffix: str, *, time
         if result.returncode != 0 or not out_path.exists():
             raise FfmpegError(f"ffmpeg failed: {result.stderr.decode(errors='replace')[-2000:]}")
         return out_path.read_bytes()
+
+
+def probe_uploaded_duration(uploaded_file) -> float | None:
+    """Read container duration without decoding the entire uploaded video."""
+    temporary_path = None
+    original_position = uploaded_file.tell() if hasattr(uploaded_file, "tell") else None
+    try:
+        if hasattr(uploaded_file, "temporary_file_path"):
+            input_path = Path(uploaded_file.temporary_file_path())
+        else:
+            handle = tempfile.NamedTemporaryFile(
+                suffix=Path(uploaded_file.name).suffix, delete=False
+            )
+            temporary_path = Path(handle.name)
+            try:
+                if hasattr(uploaded_file, "seek"):
+                    uploaded_file.seek(0)
+                shutil.copyfileobj(uploaded_file, handle)
+            finally:
+                handle.close()
+            input_path = temporary_path
+        result = subprocess.run(
+            [_ffmpeg_executable(), "-hide_banner", "-i", str(input_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+        if not match:
+            return None
+        hours, minutes, seconds = match.groups()
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        if original_position is not None and hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(original_position)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def extract_first_frame(video_bytes: bytes) -> bytes:

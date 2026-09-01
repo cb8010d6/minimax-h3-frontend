@@ -12,7 +12,6 @@ from pathlib import Path
 import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-RESOURCES_DIR = BASE_DIR / "resources"
 
 env = environ.Env()
 # Convenience for running manage.py directly against a local .env outside
@@ -20,6 +19,17 @@ env = environ.Env()
 # from env_file: and this is a no-op.
 if (BASE_DIR / ".env").exists():
     environ.Env.read_env(str(BASE_DIR / ".env"))
+
+# Docker copies resources/ into /app/resources beside manage.py, while the
+# admin bare-metal deployment runs directly from a repository where resources/
+# is one level above backend/.  Prefer the packaged layout when present, fall
+# back to the repository layout, and retain an explicit override for other
+# installations.
+_PACKAGED_RESOURCES_DIR = BASE_DIR / "resources"
+_DEFAULT_RESOURCES_DIR = (
+    _PACKAGED_RESOURCES_DIR if _PACKAGED_RESOURCES_DIR.is_dir() else BASE_DIR.parent / "resources"
+)
+RESOURCES_DIR = Path(env("RESOURCES_DIR", default=str(_DEFAULT_RESOURCES_DIR)))
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="django-insecure-dev-key-change-me")
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
@@ -152,13 +162,15 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+FRONTEND_DIST_DIR = Path(env("FRONTEND_DIST_DIR", default=str(BASE_DIR.parent / "frontend" / "dist")))
+STATICFILES_DIRS = [("frontend", FRONTEND_DIST_DIR)] if FRONTEND_DIST_DIR.exists() else []
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(env("MEDIA_ROOT", default=str(BASE_DIR / "media")))
 
 
 # Auth / allauth (OIDC login, session-cookie auth for the SPA -- see
@@ -279,22 +291,20 @@ SPECTACULAR_SETTINGS = {
 }
 
 
-# Django-Q2 -- ORM broker, no Redis/RabbitMQ. Deliberately 1 worker, hardcoded
-# (not an env knob, unlike the settings below) -- jobs are meant to be
-# processed strictly one at a time, FIFO (see generation/tasks.py's
-# process_queue()/module docstring) -- that ordering and one-at-a-time-ness
-# is enforced there by an explicit DB claim query, not by Django-Q2 itself
-# (its ORM broker's dequeue has no ORDER BY, so task pickup order isn't
-# otherwise guaranteed), but a second worker slot would let two *different*
-# jobs run in parallel regardless of claim order, which the DB-level row
-# locking alone doesn't prevent. Don't raise this without redesigning that.
+# Django-Q2 -- ORM broker, no Redis/RabbitMQ. GPU leases in
+# generation.gpu_scheduler make parallel workers safe: each job receives one
+# physical GPU, and a GPU can only have one current_job lease.
+# Q_CLUSTER_WORKERS should normally match the maximum number of physical GPUs.
+# Extra workers are harmless: they exit their queue loop when no unlocked,
+# system-idle GPU can be leased.
 #
 # "timeout" is a hard wall-clock kill of the worker process, unrelated to
 # any timeout inside generation/tasks.py/integrations/comfyui.py (those
 # just make _execute_job() return -- they can't stop Django-Q2 from
 # reincarnating the worker mid-render if this is too low). It has to
 # comfortably exceed a single render's worst case, not just its estimate:
-# _execute_job() waits up to job.estimated_seconds * 3 + 300, and
+# _execute_job() waits up to job.estimated_seconds * 3 + 300 (capped by
+# COMFYUI_MAX_RENDER_TIMEOUT below), and
 # estimated_seconds is seeded from rough, mostly-unbenchmarked guesses (see
 # generation/migrations/0009_seed_resolution_duration_catalog.py) that can
 # run long in practice -- a real ~20 minute render already tripped the old
@@ -302,11 +312,12 @@ SPECTACULAR_SETTINGS = {
 # "retry" must stay above "timeout" (Django-Q2 raises at startup otherwise)
 # with headroom for the ORM broker's own polling latency, so it's derived
 # rather than a second knob to keep in sync.
-_Q_CLUSTER_TIMEOUT = env.int("Q_CLUSTER_TIMEOUT", default=3600)
+COMFYUI_MAX_RENDER_TIMEOUT = env.int("COMFYUI_MAX_RENDER_TIMEOUT", default=14400)
+_Q_CLUSTER_TIMEOUT = env.int("Q_CLUSTER_TIMEOUT", default=18000)
 Q_CLUSTER = {
     "name": "mm_h3",
     "orm": "default",
-    "workers": 1,
+    "workers": env.int("Q_CLUSTER_WORKERS", default=10),
     "timeout": _Q_CLUSTER_TIMEOUT,
     "retry": _Q_CLUSTER_TIMEOUT + 300,
     "queue_limit": 50,
@@ -331,6 +342,20 @@ COMFYUI_OUTPUT_ROOT = env("COMFYUI_OUTPUT_ROOT", default="")
 # even though ComfyUI was never actually unreachable, just slow to answer
 # that one poll.
 COMFYUI_REQUEST_TIMEOUT = env.float("COMFYUI_REQUEST_TIMEOUT", default=15.0)
+GPU_WORKER_HOSTS = env.list("GPU_WORKER_HOSTS", default=["gpu01", "gpu02"])
+GPU_WORKER_PORT_BASE = env.int("GPU_WORKER_PORT_BASE", default=18100)
+GPU_WORKER_SSH_BIN = env("GPU_WORKER_SSH_BIN", default="ssh")
+GPU_WORKER_CONTROLLER = env(
+    "GPU_WORKER_CONTROLLER",
+    default="/opt/minimax-h3/ops/comfy_workerctl.py",
+)
+GPU_MODEL_IDLE_SECONDS = env.int("GPU_MODEL_IDLE_SECONDS", default=180)
+GPU_AVAILABLE_MODELS = set(
+    env.list(
+        "GPU_AVAILABLE_MODELS",
+        default=["fl2va:fp8", "fl2va:int8", "ref2va:fp8", "ref2va:int8"],
+    )
+)
 
 # Optional third-party ComfyUI custom-node integrations -- see extras.md.
 # Comma-separated "slug" or "slug=N" tokens, N in {0, 1, 2}:
