@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   useCreateFolder,
   useDeleteFolder,
@@ -9,13 +10,20 @@ import {
   useRenameFolder,
   useUpdateJob,
 } from "../../api/queries";
-import { useDirectorProjects, useJobMemberships } from "../../api/directorQueries";
+import {
+  useCreateProjectFromJobs,
+  useDirectorProjects,
+  useImportJobsToProject,
+  useJobMemberships,
+} from "../../api/directorQueries";
 import { MODE_LABELS, type GenerationJob, type JobFolder, type JobStatus } from "../../api/types";
 import { displayTitle } from "./jobTitle";
 import { promptColor } from "./promptColor";
 import { JobProgressBar } from "./JobProgressBar";
 import { FolderPicker } from "../shared/FolderPicker";
 import { ArchiveIcon, ChevronDownIcon, FolderIcon, HeartIcon } from "../shared/Icon";
+import { useI18n } from "../../i18n";
+import { canSelectHistoryVideo, moveSelectedId, toggleSelectedId } from "./videoSelection";
 
 const NOTIFY_STORAGE_KEY = "notifyOnJobDone";
 const ACTIVE_STATUSES = new Set<JobStatus>(["queued", "processing"]);
@@ -89,7 +97,25 @@ function QueueThumb({ job }: { job: GenerationJob }) {
   );
 }
 
-function QueueEntry({ job, onOpen, folders }: { job: GenerationJob; onOpen: () => void; folders: JobFolder[] }) {
+interface QueueEntryProps {
+  job: GenerationJob;
+  onOpen: () => void;
+  folders: JobFolder[];
+  selectable?: boolean;
+  selected?: boolean;
+  selectionOrder?: number;
+  onToggleSelect?: () => void;
+}
+
+function QueueEntry({
+  job,
+  onOpen,
+  folders,
+  selectable = false,
+  selected = false,
+  selectionOrder,
+  onToggleSelect,
+}: QueueEntryProps) {
   const failed = didJobFail(job);
   const updateJob = useUpdateJob();
   const createFolder = useCreateFolder();
@@ -135,7 +161,22 @@ function QueueEntry({ job, onOpen, folders }: { job: GenerationJob; onOpen: () =
     // context on this row that traps the popover's own z-index locally,
     // and the next sibling row (later in DOM order, same default stacking
     // level) paints on top of it instead.
-    <li className={`queue-entry${folderPickerOpen ? " queue-entry-popover-open" : ""}`}>
+    <li className={`queue-entry${folderPickerOpen ? " queue-entry-popover-open" : ""}${selected ? " queue-entry-selected" : ""}`}>
+      {selectable && onToggleSelect && (
+        <label className="queue-entry-selection" onClick={(event) => event.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelect}
+            aria-label={`Select video #${job.id}`}
+          />
+          {selectionOrder != null && (
+            <span className="queue-entry-selection-order" aria-label={`Order ${selectionOrder}`}>
+              {selectionOrder}
+            </span>
+          )}
+        </label>
+      )}
       <button type="button" className="queue-entry-button" onClick={onOpen}>
         <span className="queue-entry-thumb">
           <QueueThumb job={job} />
@@ -269,6 +310,8 @@ function useNotifyOnDone(): [boolean, (next: boolean) => void] {
 }
 
 export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
+  const navigate = useNavigate();
+  const { t } = useI18n();
   const jobs = useJobs();
   const queueEstimate = useQueueEstimate(null);
   const jobMemberships = useJobMemberships();
@@ -277,6 +320,8 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
   const createFolder = useCreateFolder();
   const renameFolder = useRenameFolder();
   const deleteFolder = useDeleteFolder();
+  const createProjectFromJobs = useCreateProjectFromJobs();
+  const importJobsToProject = useImportJobsToProject();
   // Canonical quality-tier ordering for the filter dropdown -- t2v's own
   // catalog order (RenderPreset.sort_order, see list_presets()), not
   // "whichever label a job happened to use most recently" (job.created_at
@@ -304,6 +349,9 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
   const [renamingFolderId, setRenamingFolderId] = useState<number | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deletingFolderId, setDeletingFolderId] = useState<number | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
+  const [targetProjectId, setTargetProjectId] = useState("");
 
   function resetFilters() {
     setQualityFilter(QUALITY_FILTER_ALL);
@@ -403,6 +451,80 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
     }
     return map;
   }, [jobMemberships.data]);
+  const projectJobIds = useMemo(() => new Set(projectByJobId.keys()), [projectByJobId]);
+
+  // Director projects can only reuse successfully completed standalone video
+  // jobs. Keep this predicate in the queue UI in sync with the backend's
+  // append_jobs_to_project() eligibility check so users cannot select a job
+  // that will be rejected after a long drag/reorder interaction.
+  const isSelectableVideo = (job: GenerationJob) => canSelectHistoryVideo(job, projectJobIds);
+
+  // Polling can remove jobs (for example, after an archive/delete action), so
+  // drop ids that are no longer valid while retaining the user's chosen order
+  // for all still-visible candidates.
+  useEffect(() => {
+    const eligible = new Set((jobs.data ?? []).filter(isSelectableVideo).map((job) => job.id));
+    setSelectedJobIds((selected) => selected.filter((id) => eligible.has(id)));
+    // projectByJobId is derived from a separately-polled endpoint; rerun when
+    // either source changes, but do not depend on the predicate's function identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs.data, projectByJobId]);
+
+  const selectedJobIndex = useMemo(
+    () => new Map(selectedJobIds.map((id, index) => [id, index + 1])),
+    [selectedJobIds],
+  );
+
+  function toggleSelection(jobId: number) {
+    setSelectedJobIds((selected) => toggleSelectedId(selected, jobId));
+  }
+
+  function toggleSelectionMode() {
+    setSelectionMode((enabled) => {
+      if (enabled) {
+        setSelectedJobIds([]);
+        setTargetProjectId("");
+      }
+      return !enabled;
+    });
+  }
+
+  function selectVisibleVideos() {
+    const visibleIds = filteredJobs.filter(isSelectableVideo).map((job) => job.id);
+    setSelectedJobIds((selected) => [...selected, ...visibleIds.filter((id) => !selected.includes(id))]);
+  }
+
+  function clearSelection() {
+    setSelectedJobIds([]);
+  }
+
+  function moveSelection(index: number, offset: -1 | 1) {
+    setSelectedJobIds((selected) => {
+      const target = index + offset;
+      if (index < 0 || target < 0 || target >= selected.length) return [...selected];
+      return moveSelectedId(selected, index, offset);
+    });
+  }
+
+  async function createDirectorProjectFromSelection() {
+    if (selectedJobIds.length === 0) return;
+    try {
+      if (targetProjectId) {
+        await importJobsToProject.mutateAsync({ projectId: Number(targetProjectId), jobIds: selectedJobIds });
+        setSelectedJobIds([]);
+        setSelectionMode(false);
+        navigate(`/director/${targetProjectId}`);
+        return;
+      }
+      const project = await createProjectFromJobs.mutateAsync({ jobIds: selectedJobIds });
+      setSelectedJobIds([]);
+      setSelectionMode(false);
+      navigate(`/director/${project.id}`);
+    } catch {
+      // The mutation exposes its error state below; keep the selection intact
+      // so a transient request failure can be retried without reselecting.
+    }
+  }
 
   const filteredJobs = useMemo(() => {
     return (jobs.data ?? []).filter((job) => {
@@ -461,7 +583,17 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
 
   return (
     <aside className="queue-sidebar">
-      <h2>Queue</h2>
+      <div className="queue-heading-row">
+        <h2>{t("queue.title", "Queue")}</h2>
+        <button
+          type="button"
+          className="link-button queue-select-videos-toggle"
+          onClick={toggleSelectionMode}
+          aria-pressed={selectionMode}
+        >
+          {selectionMode ? t("common.cancel", "Cancel") : t("queue.selectVideos", "Select videos")}
+        </button>
+      </div>
       <label className="queue-notify-toggle hint">
         <input
           type="checkbox"
@@ -624,6 +756,87 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
         </div>
       )}
 
+      {selectionMode && (
+        <section className="queue-video-selection-toolbar" aria-label={t("queue.selectVideos", "Select videos")}>
+          <p>
+            <strong>{t("queue.selectedCount", "Selected: {count}", { count: selectedJobIds.length })}</strong>
+            <span className="hint"> — {t("queue.selectionOrderHint", "The numbers show the initial timeline order.")}</span>
+          </p>
+          <p className="hint">{t("queue.notSelectable", "Only successful, standalone video jobs can be selected.")}</p>
+          {selectedJobIds.length > 0 && (
+            <ol className="queue-video-selection-order-list">
+              {selectedJobIds.map((jobId, index) => {
+                const job = jobs.data?.find((candidate) => candidate.id === jobId);
+                if (!job) return null;
+                return (
+                  <li key={jobId}>
+                    <span>{titleFor(job)}</span>
+                    <span className="queue-video-selection-order-actions">
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => moveSelection(index, -1)}
+                        disabled={index === 0}
+                        aria-label={`Move ${titleFor(job)} earlier`}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => moveSelection(index, 1)}
+                        disabled={index === selectedJobIds.length - 1}
+                        aria-label={`Move ${titleFor(job)} later`}
+                      >
+                        ↓
+                      </button>
+                      <button type="button" className="link-button" onClick={() => toggleSelection(jobId)}>
+                        {t("common.remove", "Remove")}
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+          <div className="queue-video-selection-actions">
+            <label className="queue-video-selection-target">
+              <span>{t("queue.addToProject", "Add to project")}</span>
+              <select value={targetProjectId} onChange={(event) => setTargetProjectId(event.target.value)}>
+                <option value="">{t("queue.newDirectorProject", "New Director project")}</option>
+                {directorProjects.data?.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.title || `${t("director.untitled", "Untitled project")} #${project.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="link-button" onClick={selectVisibleVideos}>
+              {t("queue.selectVideos", "Select videos")}
+            </button>
+            <button type="button" className="link-button" onClick={clearSelection} disabled={selectedJobIds.length === 0}>
+              {t("common.clear", "Clear")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void createDirectorProjectFromSelection()}
+              disabled={
+                selectedJobIds.length === 0 || createProjectFromJobs.isPending || importJobsToProject.isPending
+              }
+            >
+              {createProjectFromJobs.isPending || importJobsToProject.isPending
+                ? t("queue.addingVideos", "Adding…")
+                : targetProjectId
+                  ? t("queue.appendVideos", "Add to project")
+                  : t("queue.createFromVideos", "Create project")}
+            </button>
+          </div>
+          {(createProjectFromJobs.isError || importJobsToProject.isError) && (
+            <p className="error">{t("queue.addVideosError", "Couldn't add the selected videos; try again.")}</p>
+          )}
+        </section>
+      )}
+
       {jobs.isLoading && <p className="hint">Loading…</p>}
       {jobs.isError && <p className="error">Couldn't load your jobs.</p>}
       {jobs.data?.length === 0 && <p className="empty-state">No jobs yet — queue one to see it here.</p>}
@@ -658,7 +871,16 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
                 {!collapsed && (
                   <ul className="queue-list">
                     {jobsInFolder.map((job) => (
-                      <QueueEntry key={job.id} job={job} onOpen={() => onOpenJob(job.id)} folders={folders.data ?? []} />
+                      <QueueEntry
+                        key={job.id}
+                        job={job}
+                        onOpen={() => onOpenJob(job.id)}
+                        folders={folders.data ?? []}
+                        selectable={selectionMode && isSelectableVideo(job)}
+                        selected={selectedJobIndex.has(job.id)}
+                        selectionOrder={selectedJobIndex.get(job.id)}
+                        onToggleSelect={() => toggleSelection(job.id)}
+                      />
                     ))}
                   </ul>
                 )}
@@ -687,6 +909,10 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
                           job={job}
                           onOpen={() => onOpenJob(job.id)}
                           folders={folders.data ?? []}
+                          selectable={selectionMode && isSelectableVideo(job)}
+                          selected={selectedJobIndex.has(job.id)}
+                          selectionOrder={selectedJobIndex.get(job.id)}
+                          onToggleSelect={() => toggleSelection(job.id)}
                         />
                       ))}
                     </ul>
@@ -698,7 +924,16 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
       ) : (
         <ul className="queue-list">
           {filteredJobs.map((job) => (
-            <QueueEntry key={job.id} job={job} onOpen={() => onOpenJob(job.id)} folders={folders.data ?? []} />
+            <QueueEntry
+              key={job.id}
+              job={job}
+              onOpen={() => onOpenJob(job.id)}
+              folders={folders.data ?? []}
+              selectable={selectionMode && isSelectableVideo(job)}
+              selected={selectedJobIndex.has(job.id)}
+              selectionOrder={selectedJobIndex.get(job.id)}
+              onToggleSelect={() => toggleSelection(job.id)}
+            />
           ))}
         </ul>
       )}

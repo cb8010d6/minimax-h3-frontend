@@ -984,6 +984,18 @@ select {
   color: var(--text-h);
 }
 
+.queue-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.queue-heading-row h2 {
+  margin-bottom: 0;
+}
+
 .queue-notify-toggle {
   display: flex;
   align-items: center;
@@ -1380,7 +1392,7 @@ select {
   margin: 0 0 6px;
 }
 
-.queue-entry-selected .queue-entry-button {
+.queue-entry-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-bg);
 }
@@ -1546,8 +1558,59 @@ select {
 
 .queue-video-selection-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 7px;
+}
+
+.queue-video-selection-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  font-size: 12px;
+}
+
+.queue-video-selection-target select {
+  max-width: 170px;
+  font-size: 12px;
+}
+
+.queue-video-selection-order-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 22px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.queue-video-selection-order-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.queue-video-selection-order-list li > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-video-selection-order-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.queue-video-selection-order-actions .link-button {
+  padding: 1px 3px;
+  font-size: 12px;
 }
 
 .queue-entry-button {
