@@ -1365,6 +1365,23 @@ def assemble_project(request, project_id: int):
     not_rendered = [c for c in clips if not (c.current_job and c.current_job.video_file)]
     if not_rendered:
         return Response({"error": f"{len(not_rendered)} clip(s) haven't rendered a video yet."}, status=409)
+    missing_files = []
+    for clip in clips:
+        video_file = clip.current_job.video_file
+        try:
+            exists = video_file.storage.exists(video_file.name)
+        except (OSError, ValueError):
+            exists = False
+        if not exists:
+            missing_files.append(clip)
+    if missing_files:
+        return Response(
+            {
+                "error": f"{len(missing_files)} selected clip(s) have missing video files. "
+                "Restore the media storage or re-render those clips before exporting."
+            },
+            status=409,
+        )
     dirty = [c for c in clips if c.needs_render]
     if dirty:
         return Response(
@@ -1378,11 +1395,17 @@ def assemble_project(request, project_id: int):
             video_file = clip.current_job.video_file
             suffix = Path(video_file.name).suffix or ".mp4"
             local_path = Path(tmp) / f"clip_{index}{suffix}"
-            video_file.open("rb")
             try:
-                local_path.write_bytes(video_file.read())
-            finally:
-                video_file.close()
+                video_file.open("rb")
+                try:
+                    local_path.write_bytes(video_file.read())
+                finally:
+                    video_file.close()
+            except OSError:
+                return Response(
+                    {"error": "A selected video file disappeared while export was starting. Try again."},
+                    status=409,
+                )
             local_paths.append(local_path)
 
         try:

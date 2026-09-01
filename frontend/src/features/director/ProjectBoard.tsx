@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { apiErrorMessage } from "../../api/client";
 import {
   useAssembleProject,
   useCancelAllRenders,
@@ -490,7 +491,14 @@ export function ProjectBoard() {
               </a>
             )}
           </div>
-          {assembleProject.isError && <p className="error">{t("director.exportError", "Couldn't assemble the export. Try again.")}</p>}
+          {assembleProject.isError && (
+            <p className="error">
+              {apiErrorMessage(
+                assembleProject.error,
+                t("director.exportError", "Couldn't assemble the export. Try again."),
+              )}
+            </p>
+          )}
           {refineAllProgress && refineAllProgress.done === refineAllProgress.total && (
             <p className={refineAllProgress.failed ? "error" : "hint"}>
               Re-refined {refineAllProgress.total - refineAllProgress.failed}/{refineAllProgress.total} clip

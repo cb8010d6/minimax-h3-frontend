@@ -1,4 +1,5 @@
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -7,6 +8,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 
 from generation.models import GenerationJob, Mode, ModelVariant, RenderDuration, RenderPreset
+from integrations import assembly
 
 from . import services
 from .models import Clip, JobProjectTag, Project
@@ -50,6 +52,21 @@ class PlannedSceneFeasibilityTests(SimpleTestCase):
             ]
         )
         self.assertEqual(scenes[0]["warnings"], ["prompt_too_dense", "exact_generated_text"])
+
+
+class DirectorAssemblyRuntimeTests(SimpleTestCase):
+    @mock.patch("imageio_ffmpeg.read_frames")
+    def test_probe_uses_bundled_ffmpeg_metadata_without_ffprobe(self, read_frames):
+        reader = mock.MagicMock()
+        reader.__next__.return_value = {
+            "source_size": (1344, 768),
+            "fps": 24.0,
+        }
+        read_frames.return_value = reader
+
+        self.assertEqual(assembly._probe_video(Path("clip.mp4")), (1344, 768, "24.0"))
+        read_frames.assert_called_once_with("clip.mp4", pix_fmt="rgb24")
+        reader.close.assert_called_once_with()
 
 
 class DirectorHistoryCompositionTests(TestCase):
@@ -192,6 +209,23 @@ class DirectorHistoryCompositionTests(TestCase):
         self.assertEqual(captured, [b"video-1", b"video-3"])
         project.refresh_from_db()
         self.assertTrue(project.assembled_video_file)
+
+    @mock.patch("director.api.assembly.concat_videos")
+    def test_assemble_reports_missing_video_file_without_calling_ffmpeg(self, concat_videos):
+        job = self.make_job(1)
+        project = services.create_project_from_job(job)
+        clip = project.clips.get()
+        job.video_file.storage.delete(job.video_file.name)
+
+        response = self.client.post(
+            f"/api/director/projects/{project.id}/assemble/",
+            {"clip_ids": [clip.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("missing", response.data["error"].lower())
+        concat_videos.assert_not_called()
 
     def test_bulk_create_api_rejects_an_inaccessible_job_without_leaking_it(self):
         own_job = self.make_job(1)

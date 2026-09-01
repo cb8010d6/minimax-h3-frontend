@@ -12,13 +12,13 @@ it's its own small runner rather than reusing that one.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import tempfile
 from pathlib import Path
 
+from integrations import media_post
+
 FFMPEG_TIMEOUT = 600
-FFPROBE_TIMEOUT = 30
 
 
 class AssemblyError(RuntimeError):
@@ -26,29 +26,28 @@ class AssemblyError(RuntimeError):
 
 
 def _probe_video(path: Path) -> tuple[int, int, str]:
-    """Returns (width, height, avg_frame_rate) for path's first video stream."""
+    """Return video metadata using the backend's bundled user-space ffmpeg.
+
+    imageio-ffmpeg yields metadata before it decodes the first frame, so this
+    retains ffprobe-like cost without requiring a separately installed
+    ffprobe binary on the host.
+    """
+    reader = None
     try:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=width,height,avg_frame_rate",
-                "-of", "json",
-                str(path),
-            ],
-            capture_output=True,
-            timeout=FFPROBE_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AssemblyError(f"ffprobe timed out on {path.name}") from exc
-    if result.returncode != 0:
-        raise AssemblyError(f"ffprobe failed on {path.name}: {result.stderr.decode(errors='replace')[-500:]}")
-    try:
-        stream = json.loads(result.stdout)["streams"][0]
-    except (KeyError, IndexError, ValueError) as exc:
-        raise AssemblyError(f"ffprobe found no video stream in {path.name}") from exc
-    return stream.get("width", 0), stream.get("height", 0), stream.get("avg_frame_rate") or "30/1"
+        from imageio_ffmpeg import read_frames
+
+        reader = read_frames(str(path), pix_fmt="rgb24")
+        metadata = next(reader)
+        width, height = metadata.get("source_size") or metadata.get("size") or (0, 0)
+        fps = metadata.get("fps") or 30.0
+        if not width or not height:
+            raise ValueError("no video dimensions")
+        return int(width), int(height), str(fps)
+    except (ImportError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as exc:
+        raise AssemblyError(f"Could not inspect video clip {path.name}: {exc}") from exc
+    finally:
+        if reader is not None:
+            reader.close()
 
 
 def concat_videos(video_paths: list[Path]) -> bytes:
@@ -82,7 +81,11 @@ def concat_videos(video_paths: list[Path]) -> bytes:
 
     with tempfile.TemporaryDirectory() as tmp:
         out_path = Path(tmp) / "assembled.mp4"
-        args = ["ffmpeg", "-y"]
+        try:
+            ffmpeg_executable = media_post._ffmpeg_executable()
+        except media_post.FfmpegError as exc:
+            raise AssemblyError(str(exc)) from exc
+        args = [ffmpeg_executable, "-y"]
         for path in video_paths:
             args += ["-i", str(path)]
         args += [
@@ -101,6 +104,8 @@ def concat_videos(video_paths: list[Path]) -> bytes:
             result = subprocess.run(args, capture_output=True, timeout=FFMPEG_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise AssemblyError(f"ffmpeg timed out after {FFMPEG_TIMEOUT}s") from exc
+        except OSError as exc:
+            raise AssemblyError(f"ffmpeg could not start: {exc}") from exc
         if result.returncode != 0 or not out_path.exists():
             raise AssemblyError(f"ffmpeg failed: {result.stderr.decode(errors='replace')[-2000:]}")
         return out_path.read_bytes()

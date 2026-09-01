@@ -27,6 +27,18 @@ export class ApiError extends Error {
   }
 }
 
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError && error.body && typeof error.body === "object") {
+    const message = (error.body as { error?: unknown }).error;
+    if (typeof message === "string" && message.trim()) return message;
+    const firstFieldError = Object.values(error.body as Record<string, unknown>).find(
+      (value) => Array.isArray(value) && typeof value[0] === "string",
+    );
+    if (Array.isArray(firstFieldError)) return String(firstFieldError[0]);
+  }
+  return fallback;
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
