@@ -3,13 +3,53 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 
 from generation.models import GenerationJob, Mode, ModelVariant, RenderDuration, RenderPreset
 
 from . import services
 from .models import Clip, JobProjectTag, Project
+
+
+class PlannedSceneFeasibilityTests(SimpleTestCase):
+    def test_warns_when_short_clip_overloads_dialogue_and_exact_generated_text(self):
+        prompt = (
+            "Show accurate bilingual subtitles. "
+            "<d>[English] This line contains far too many spoken words to fit naturally.</d> "
+            "<d>[English] A second line makes the timing substantially worse.</d>"
+        )
+
+        warnings = services.planned_scene_warning_codes(prompt, 5)
+
+        self.assertIn("dialogue_overload", warnings)
+        self.assertIn("exact_generated_text", warnings)
+
+    def test_warns_when_prompt_is_too_dense_for_one_director_clip(self):
+        warnings = services.planned_scene_warning_codes("detail " * 321, 8)
+        self.assertIn("prompt_too_dense", warnings)
+
+    def test_simple_single_beat_prompt_has_no_warning(self):
+        prompt = "A woman pauses at the doorway. <d>[English] Wait.</d>"
+        self.assertEqual(services.planned_scene_warning_codes(prompt, 7), [])
+
+    def test_chinese_dialogue_is_counted_in_timing_budget(self):
+        prompt = "<d>[中文]这是一句明显无法在五秒内自然说完的中文对白内容</d>"
+        self.assertIn("dialogue_overload", services.planned_scene_warning_codes(prompt, 5))
+
+    def test_normalized_scene_includes_computed_warning_codes(self):
+        scenes = services.normalize_planned_scenes(
+            [
+                {
+                    "mode": "t2v",
+                    "continues_previous": False,
+                    "duration_seconds": 5,
+                    "prompt": "Display this exact bilingual subtitle " + "word " * 330,
+                    "notes": "",
+                }
+            ]
+        )
+        self.assertEqual(scenes[0]["warnings"], ["prompt_too_dense", "exact_generated_text"])
 
 
 class DirectorHistoryCompositionTests(TestCase):

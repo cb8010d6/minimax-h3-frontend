@@ -2881,6 +2881,25 @@ input.catalog-label-input {
   padding: 12px;
 }
 
+.plan-scene-card-warning {
+  border-color: #d89a2b;
+}
+
+.plan-scene-warnings {
+  margin: 8px 0;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: #fff7df;
+  color: #6b4600;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.plan-scene-warnings ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
 .plan-scene-card textarea {
   width: 100%;
   box-sizing: border-box;

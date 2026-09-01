@@ -239,7 +239,7 @@ The target video is in a cinematic, literary music-video style with soft lightin
 [Shot 2] At 00:09.000, the shot cuts to an extreme close-up...
 ```
 
-For generation tasks, `detailed_description` is normally 350-500 English words. Dialogue-dense content prioritizes fitting the complete spoken timeline rather than mechanically reaching a word count. Video-editing descriptions scale with the complexity of the source video and do not have to follow the generation-task range. A single shot does not automatically justify a shorter description; distribute detail across multiple shots according to their information load.
+For standalone generation tasks, `detailed_description` is normally 350-500 English words. A calling workflow may set a lower prompt budget for short timeline clips; when it does, that workflow-specific budget takes precedence. Dialogue-dense content prioritizes fitting the complete spoken timeline rather than mechanically reaching a word count. Video-editing descriptions scale with the complexity of the source video and do not have to follow the generation-task range. A single shot does not automatically justify a shorter description; distribute detail across multiple shots according to their information load.
 
 ### 5.3 Using Reference Labels in Shots
 

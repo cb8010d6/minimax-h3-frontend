@@ -114,7 +114,13 @@ export interface PlannedScene {
   duration_seconds: number | null;
   prompt: string;
   notes: string;
+  warnings?: PlannedSceneWarningCode[];
 }
+
+export type PlannedSceneWarningCode =
+  | "prompt_too_dense"
+  | "dialogue_overload"
+  | "exact_generated_text";
 
 // One suggested reference asset from POST .../extract_references/ -- a
 // preview, not yet generated or attached. `description` is a ready-to-use

@@ -69,6 +69,40 @@ class PlanError(Exception):
     400 by director/api.py."""
 
 
+_DIRECTOR_EXACT_TEXT_PATTERNS = (
+    re.compile(r"\b(?:accurate|burned-in)\s+bilingual\s+subtitles?\b", re.IGNORECASE),
+    re.compile(r"\bdisplay\b.{0,120}\bexactly\s+as\b", re.IGNORECASE | re.DOTALL),
+    re.compile(
+        r"\b(?:display|show|render|present)\b.{0,100}\bexact(?:ly)?\b.{0,60}"
+        r"\b(?:text|subtitles?|captions?|typography|wording)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r"\b(?:on-screen|production)\s+(?:text|caption)\s+(?:reads?|reading)\b", re.IGNORECASE),
+    re.compile(r"\btext\s+(?:static\s+and\s+)?legible\b", re.IGNORECASE),
+)
+
+
+def _prompt_token_count(value: str) -> int:
+    """Count Latin-style words and individual Han characters."""
+    return len(re.findall(r"[\u3400-\u9fff]|[^\W_]+(?:['-][^\W_]+)*|\d+", value, re.UNICODE))
+
+
+def planned_scene_warning_codes(prompt: str, duration_seconds: float | None) -> list[str]:
+    """Return advisory warnings for a short generated Director scene."""
+    duration = max(float(duration_seconds or 5), 1.0)
+    dialogue = re.findall(r"<d>\s*(?:\[[^\]]+\])?\s*(.*?)</d>", prompt, re.IGNORECASE | re.DOTALL)
+    spoken_words = sum(_prompt_token_count(line) for line in dialogue)
+
+    warnings: list[str] = []
+    if _prompt_token_count(prompt) > 320:
+        warnings.append("prompt_too_dense")
+    if len(dialogue) > 2 or spoken_words > max(8, int(duration * 2.4)):
+        warnings.append("dialogue_overload")
+    if any(pattern.search(prompt) for pattern in _DIRECTOR_EXACT_TEXT_PATTERNS):
+        warnings.append("exact_generated_text")
+    return warnings
+
+
 def _predecessor(clip: Clip) -> Clip | None:
     return Clip.objects.filter(project_id=clip.project_id, order__lt=clip.order).order_by("-order").first()
 
@@ -1155,6 +1189,7 @@ def normalize_planned_scenes(raw_scenes, *, require_reference_mode: bool = False
                 "duration_seconds": duration_seconds,
                 "prompt": prompt,
                 "notes": str(raw.get("notes", "")).strip(),
+                "warnings": planned_scene_warning_codes(prompt, duration_seconds),
             }
         )
     return scenes

@@ -134,6 +134,23 @@ Prevent this actively rather than leaving it to chance:
 
 ## 3. Writing each scene's prompt (no shared references)
 
+### Director clip feasibility rules
+
+The house guide below describes the maximum useful detail for a standalone
+generation. Director scenes are short timeline clips, so these rules override
+any general 350-500-word target in that guide:
+
+- Keep each clip to one main visual beat and normally about 180-320 English
+  words. Split distinct actions, camera setups, or locations into scenes.
+- Budget spoken dialogue conservatively at about 2.2 English words per second.
+  For clips of 8 seconds or less, prefer no more than two short `<d>` lines.
+- Do not ask the model to draw exact subtitles, captions, UI labels, credits,
+  disclaimers, or title-card typography. Describe the clean plate in `prompt`
+  and put the exact overlay wording in `notes` for post-production.
+- Never combine a long dialogue exchange, several on-screen text changes, and
+  multiple camera moves in one clip. Preserve the story by proposing more
+  scenes instead of compressing every requirement into one prompt.
+
 This section applies when no reference tokens are listed as available to
 you — see section 3.5 instead if they are.
 

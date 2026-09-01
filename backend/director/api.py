@@ -152,6 +152,14 @@ class PlannedSceneSerializer(serializers.Serializer):
     )
     prompt = serializers.CharField()
     notes = serializers.CharField(allow_blank=True, required=False)
+    warnings = serializers.ListField(
+        child=serializers.ChoiceField(
+            choices=["prompt_too_dense", "dialogue_overload", "exact_generated_text"]
+        ),
+        required=False,
+        read_only=True,
+        help_text="Non-blocking feasibility warnings for the scene review step.",
+    )
 
 
 class PlanRequestSerializer(serializers.Serializer):

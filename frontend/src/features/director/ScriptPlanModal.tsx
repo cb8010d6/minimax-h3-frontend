@@ -8,6 +8,7 @@ import {
 } from "../../api/directorQueries";
 import { useCreateJob, useJob, usePresets } from "../../api/queries";
 import type { PlannedScene, ProjectResource, ReferenceCandidate } from "../../api/directorTypes";
+import { planSceneWarningCodes } from "./planFeasibility";
 import { MODE_LABELS } from "../../api/types";
 import type { RenderPreset } from "../../api/types";
 import { CloseIcon } from "../shared/Icon";
@@ -377,8 +378,13 @@ export function ScriptPlanModal({
               apply. Nothing is created until you click Apply.
             </p>
             <ul className="plan-scene-list">
-              {scenes.map((scene, index) => (
-                <li key={index} className="plan-scene-card">
+              {scenes.map((scene, index) => {
+                const warningCodes = planSceneWarningCodes(scene);
+                return (
+                  <li
+                    key={index}
+                    className={`plan-scene-card${warningCodes.length ? " plan-scene-card-warning" : ""}`}
+                  >
                   <div className="plan-scene-card-header">
                     <span className="plan-scene-number">Scene {index + 1}</span>
                     <span className="hint">{MODE_LABELS[scene.mode]}</span>
@@ -408,13 +414,32 @@ export function ScriptPlanModal({
                     </button>
                   </div>
                   {scene.notes && <p className="hint plan-scene-notes">{scene.notes}</p>}
+                  {warningCodes.length > 0 && (
+                    <div className="plan-scene-warnings" role="alert">
+                      <strong>Check before applying:</strong>
+                      <ul>
+                        {warningCodes.includes("prompt_too_dense") && (
+                          <li>This short clip asks for too many details. Split it or keep one visual beat.</li>
+                        )}
+                        {warningCodes.includes("dialogue_overload") && (
+                          <li>
+                            The dialogue is unlikely to fit naturally. Shorten it, lengthen the clip, or split the scene.
+                          </li>
+                        )}
+                        {warningCodes.includes("exact_generated_text") && (
+                          <li>Generated text may be misspelled. Put exact wording in notes and add it during final editing.</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
                   <textarea
                     rows={4}
                     value={scene.prompt}
                     onChange={(e) => updateScene(index, { prompt: e.target.value })}
                   />
-                </li>
-              ))}
+                  </li>
+                );
+              })}
               {scenes.length === 0 && <p className="empty-state">No scenes left — remove the modal or generate again.</p>}
             </ul>
 
