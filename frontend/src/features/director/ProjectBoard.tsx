@@ -285,7 +285,11 @@ export function ProjectBoard() {
     ? availableModelVariants
     : [projectModelVariant, ...availableModelVariants];
   const selectedExportClips = project.data?.clips.filter((clip) => exportClipIds.includes(clip.id)) ?? [];
-  const canAssemble = selectedExportClips.length > 0 && selectedExportClips.every((c) => c.video_url && !c.needs_render);
+  const selectedDirtyCount = selectedExportClips.filter((clip) => clip.needs_render).length;
+  const allSelectedHaveVideos =
+    selectedExportClips.length > 0 && selectedExportClips.every((clip) => Boolean(clip.video_url));
+  const canAssemble = allSelectedHaveVideos && selectedDirtyCount === 0;
+  const canAssembleExisting = allSelectedHaveVideos && selectedDirtyCount > 0;
   // Only r2v clips can actually wire a shared resource into a render (see
   // backend director/services.py's project_requires_reference_mode()) --
   // once the project has any, every clip must be one.
@@ -485,6 +489,34 @@ export function ProjectBoard() {
                 ? t("director.assembling", "Assembling…")
                 : t("director.exportSelected", "Export selected ({count})", { count: exportClipIds.length })}
             </button>
+            {canAssembleExisting && (
+              <button
+                type="button"
+                onClick={() => {
+                  const confirmed = window.confirm(
+                    t(
+                      "director.exportExistingConfirm",
+                      "This exports existing videos from {count} clip(s) that no longer match the current project settings. It will not mark them up to date. Continue?",
+                      { count: selectedDirtyCount },
+                    ),
+                  );
+                  if (confirmed) {
+                    assembleProject.mutate({ projectId, clipIds: exportClipIds, allowStale: true });
+                  }
+                }}
+                disabled={assembleProject.isPending}
+                title={t(
+                  "director.exportExistingHint",
+                  "Export the selected clips' existing videos without treating them as current.",
+                )}
+              >
+                {assembleProject.isPending
+                  ? t("director.assembling", "Assembling…")
+                  : t("director.exportExisting", "Export existing results ({count})", {
+                      count: exportClipIds.length,
+                    })}
+              </button>
+            )}
             {project.data.assembled_video_url && (
               <a href={project.data.assembled_video_url} download className="button">
                 <span aria-hidden="true">⬇</span> {t("director.downloadExport", "Download export")}

@@ -512,10 +512,18 @@ export function useApplyPlan() {
 export function useAssembleProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, clipIds }: { projectId: number; clipIds: number[] }) =>
+    mutationFn: ({
+      projectId,
+      clipIds,
+      allowStale = false,
+    }: {
+      projectId: number;
+      clipIds: number[];
+      allowStale?: boolean;
+    }) =>
       apiFetch<ProjectDetail>(`/director/projects/${projectId}/assemble/`, {
         method: "POST",
-        body: JSON.stringify({ clip_ids: clipIds }),
+        body: JSON.stringify({ clip_ids: clipIds, allow_stale: allowStale }),
       }),
     onSuccess: (_data, { projectId }) => {
       void queryClient.invalidateQueries({ queryKey: ["director-project", projectId] });

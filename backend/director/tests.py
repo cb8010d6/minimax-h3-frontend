@@ -227,6 +227,55 @@ class DirectorHistoryCompositionTests(TestCase):
         self.assertIn("missing", response.data["error"].lower())
         concat_videos.assert_not_called()
 
+    @mock.patch("director.api.assembly.concat_videos", return_value=b"stale-export")
+    def test_assemble_dirty_clip_requires_explicit_stale_authorization(self, concat_videos):
+        job = self.make_job(1)
+        project = services.create_project_from_job(job)
+        clip = project.clips.get()
+        clip.needs_render = True
+        clip.save(update_fields=["needs_render"])
+
+        blocked = self.client.post(
+            f"/api/director/projects/{project.id}/assemble/",
+            {"clip_ids": [clip.id]},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, 409)
+        concat_videos.assert_not_called()
+
+        exported = self.client.post(
+            f"/api/director/projects/{project.id}/assemble/",
+            {"clip_ids": [clip.id], "allow_stale": True},
+            format="json",
+        )
+
+        self.assertEqual(exported.status_code, 200)
+        concat_videos.assert_called_once()
+        project.refresh_from_db()
+        project.assembled_video_file.open("rb")
+        try:
+            self.assertEqual(project.assembled_video_file.read(), b"stale-export")
+        finally:
+            project.assembled_video_file.close()
+        clip.refresh_from_db()
+        self.assertTrue(clip.needs_render)
+
+    @mock.patch("director.api.assembly.concat_videos")
+    def test_assemble_rejects_non_boolean_stale_authorization(self, concat_videos):
+        job = self.make_job(1)
+        project = services.create_project_from_job(job)
+        clip = project.clips.get()
+
+        response = self.client.post(
+            f"/api/director/projects/{project.id}/assemble/",
+            {"clip_ids": [clip.id], "allow_stale": "true"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("true or false", response.data["error"])
+        concat_videos.assert_not_called()
+
     def test_bulk_create_api_rejects_an_inaccessible_job_without_leaking_it(self):
         own_job = self.make_job(1)
         foreign_job = self.make_job(2, user=self.other_user)

@@ -138,6 +138,12 @@ class AssembleRequestSerializer(serializers.Serializer):
     clip_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1), required=False, allow_empty=False
     )
+    allow_stale = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Explicitly allow rendered videos from clips marked needs_render. The export "
+        "uses their existing current_job files and does not clear the dirty flags.",
+    )
 
 
 class PlannedSceneSerializer(serializers.Serializer):
@@ -1327,7 +1333,9 @@ def apply_plan(request, project_id: int):
     summary="Assemble selected clips into one downloadable video, in board order",
     description="Concatenates clip_ids (or every clip when omitted) in board order into one MP4 (see "
     "integrations/assembly.py) and stores it as the project's assembled_video_file, replacing "
-    "any previous export. Every selected clip must have a rendered video and be clean.",
+    "any previous export. Every selected clip must have a rendered video. Dirty clips are rejected "
+    "unless the caller explicitly sends allow_stale=true; this exports their existing files and "
+    "does not clear needs_render.",
     request=AssembleRequestSerializer,
     responses={
         200: ProjectDetailSerializer,
@@ -1342,6 +1350,9 @@ def apply_plan(request, project_id: int):
 def assemble_project(request, project_id: int):
     project = _get_project(request, project_id)
     clips = list(project.clips.select_related("current_job").order_by("order"))
+    allow_stale = request.data.get("allow_stale", False)
+    if not isinstance(allow_stale, bool):
+        return Response({"error": "allow_stale must be true or false."}, status=400)
     requested_ids = request.data.get("clip_ids")
     if requested_ids is not None:
         if (
@@ -1383,9 +1394,12 @@ def assemble_project(request, project_id: int):
             status=409,
         )
     dirty = [c for c in clips if c.needs_render]
-    if dirty:
+    if dirty and not allow_stale:
         return Response(
-            {"error": f"{len(dirty)} clip(s) need re-render before exporting -- render everything first."},
+            {
+                "error": f"{len(dirty)} clip(s) need re-render before exporting. "
+                "Re-render them, or explicitly export their existing results."
+            },
             status=409,
         )
 
