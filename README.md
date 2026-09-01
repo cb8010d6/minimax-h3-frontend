@@ -183,6 +183,36 @@ See [`resources/COMFYUI_API_GUIDE.md`](resources/COMFYUI_API_GUIDE.md) for how t
 | `TURBO_STEPS_T2V_I2V` | `8` | Sampler steps for a turbo t2v/i2v job — see [`docs/extras.md#turbo`](docs/extras.md#turbo). Only relevant when `turbo` is in `COMFYUI_EXTRAS`. |
 | `TURBO_STEPS_R2V` | `4` | Same as above, for r2v/r2i/r2a jobs — r2v's turbo LoRA was trained at a different step count than t2v/i2v's. |
 
+### Dynamic GPU workers (optional)
+
+The H3 scheduler can discover and lease multiple GPUs instead of treating one
+ComfyUI endpoint as a global singleton. Set `GPU_WORKER_HOSTS` to the SSH
+aliases (or host names) that run ComfyUI, and install the repository's
+`ops/comfy_workerctl.py` on each host. The scheduler invokes that controller
+over SSH for `inventory`, `start`, `unload`, `cleanup`, and `stop` actions;
+the SSH account needs permission to run `nvidia-smi`, start ComfyUI, and reach
+the per-GPU loopback ports.
+
+| Variable | Default | Description |
+|---|---|---|
+| `GPU_WORKER_HOSTS` | `gpu01,gpu02` | Comma-separated SSH targets. Every detected GPU is considered; cards with unmanaged compute processes are skipped. |
+| `GPU_WORKER_PORT_BASE` | `18100` | Per-GPU ComfyUI port base; GPU index `N` uses `base + N`. |
+| `GPU_WORKER_SSH_BIN` | `ssh` | SSH executable used by Django. |
+| `GPU_WORKER_CONTROLLER` | `/opt/minimax-h3/ops/comfy_workerctl.py` | Absolute path to the controller on each GPU host. Copy `ops/comfy_workerctl.py` there or set this to your deployment path. |
+| `GPU_MODEL_IDLE_SECONDS` | `180` | Seconds a confirmed warm model may remain idle before the scheduler unloads it. |
+| `GPU_AVAILABLE_MODELS` | `fl2va:fp8,fl2va:int8,ref2va:fp8,ref2va:int8` | Model keys exposed to the UI. Keep this list in sync with the files installed on the GPU hosts. |
+
+The controller is intentionally environment-driven so the open-source default
+does not assume a particular home directory. On each GPU host, set
+`MINIMAX_H3_ROOT`, `COMFYUI_ROOT`, `COMFYUI_PYTHON`, `COMFYUI_START_SCRIPT`,
+`COMFYUI_LOG_ROOT`, `COMFYUI_RUNTIME_DATA_ROOT`, and `COMFYUI_PORT_BASE` when
+your filesystem differs from the documented `/opt` defaults. Its `inventory`
+action is safe to run as a smoke test before enabling the scheduler:
+
+```sh
+python3 /opt/minimax-h3/ops/comfy_workerctl.py inventory
+```
+
 ### LLM prompt-assist (optional)
 
 Entirely optional — leave `LLM_API_BASE_URL`/`LLM_MODEL` blank and no AI
