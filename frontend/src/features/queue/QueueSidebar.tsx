@@ -464,7 +464,10 @@ export function QueueSidebar({ onOpenJob }: QueueSidebarProps) {
   // for all still-visible candidates.
   useEffect(() => {
     const eligible = new Set((jobs.data ?? []).filter(isSelectableVideo).map((job) => job.id));
-    setSelectedJobIds((selected) => selected.filter((id) => eligible.has(id)));
+    setSelectedJobIds((selected) => {
+      const next = selected.filter((id) => eligible.has(id));
+      return next.length === selected.length ? selected : next;
+    });
     // projectByJobId is derived from a separately-polled endpoint; rerun when
     // either source changes, but do not depend on the predicate's function identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
