@@ -11,12 +11,15 @@ import type {
   DurationEstimateResponse,
   GenerationJob,
   GenerationJobDetail,
+  GpuWorker,
   Invite,
   JobFolder,
   Mode,
+  ModelVariant,
   QualityCatalog,
   QueueEstimate,
   RenderPreset,
+  ResolutionPreview,
 } from "./types";
 
 const ACTIVE_JOB_STATUSES = new Set(["queued", "processing"]);
@@ -29,10 +32,35 @@ export function useCurrentUser() {
   return useQuery({ queryKey: ["me"], queryFn: () => apiFetch<CurrentUser>("/me/") });
 }
 
-export function usePresets(mode: Mode) {
+export function usePresets(
+  mode: Mode,
+  modelVariant: ModelVariant = "fp8",
+  aspectRatio: string | null = null,
+) {
+  const params = new URLSearchParams({ mode, model_variant: modelVariant });
+  if (aspectRatio) params.set("aspect_ratio", aspectRatio);
   return useQuery({
-    queryKey: ["presets", mode],
-    queryFn: () => apiFetch<RenderPreset[]>(`/presets/?mode=${mode}`),
+    queryKey: ["presets", mode, modelVariant, aspectRatio],
+    queryFn: () => apiFetch<RenderPreset[]>(`/presets/?${params.toString()}`),
+  });
+}
+
+export function useResolutionPreview(
+  presetId: number | null,
+  aspectRatio: string | null,
+  modelVariant: ModelVariant,
+) {
+  return useQuery({
+    queryKey: ["resolution-preview", presetId, aspectRatio, modelVariant],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        preset_id: String(presetId),
+        aspect_ratio: String(aspectRatio),
+        model_variant: modelVariant,
+      });
+      return apiFetch<ResolutionPreview>(`/resolution-preview/?${params.toString()}`);
+    },
+    enabled: presetId != null && aspectRatio != null,
   });
 }
 
@@ -98,6 +126,7 @@ export interface CreateJobInput {
    * GenerateScreen's pre-queue folder picker -- every id must be one of the
    * requesting user's own folders. */
   folderIds?: number[];
+  modelVariant?: ModelVariant;
 }
 
 export function useCreateJob() {
@@ -109,6 +138,7 @@ export function useCreateJob() {
       form.set("duration_id", String(input.durationId));
       form.set("aspect_ratio", input.aspectRatio);
       form.set("raw_prompt", input.rawPrompt);
+      form.set("model_variant", input.modelVariant ?? "fp8");
       if (input.improvedPrompt) form.set("improved_prompt", input.improvedPrompt);
       for (const file of input.referenceImages ?? []) form.append("reference_images", file);
       for (const file of input.referenceAudio ?? []) form.append("reference_audio", file);
@@ -133,6 +163,38 @@ export function useCreateJob() {
       // refetch otherwise.
       void queryClient.invalidateQueries({ queryKey: ["folders"] });
     },
+  });
+}
+
+export function useGpuWorkers() {
+  return useQuery({
+    queryKey: ["gpu-workers"],
+    queryFn: () => apiFetch<GpuWorker[]>("/gpu/workers/"),
+    refetchInterval: 5000,
+  });
+}
+
+export function usePrewarmGpu() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { family: "fl2va" | "ref2va"; modelVariant: ModelVariant }) =>
+      apiFetch<{ status: string; task_id: string }>("/gpu/prewarm/", {
+        method: "POST",
+        body: JSON.stringify({ family: input.family, model_variant: input.modelVariant }),
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["gpu-workers"] }),
+  });
+}
+
+export function useUnloadGpu() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (workerId: number) =>
+      apiFetch<GpuWorker>("/gpu/unload/", {
+        method: "POST",
+        body: JSON.stringify({ worker_id: workerId }),
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["gpu-workers"] }),
   });
 }
 

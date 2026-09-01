@@ -1,6 +1,7 @@
 import type { ProjectDetail } from "../../api/directorTypes";
 import { useConvertToReference, useCreateProjectResource, useDeleteProjectResource } from "../../api/directorQueries";
 import type { ReferenceKind } from "../../api/types";
+import { useI18n } from "../../i18n";
 import { DropZone } from "../shared/DropZone";
 
 const KIND_ACCEPT: Record<ReferenceKind, string> = {
@@ -8,12 +9,6 @@ const KIND_ACCEPT: Record<ReferenceKind, string> = {
   audio: "audio/*",
   video: "video/*",
 };
-const KIND_LABEL: Record<ReferenceKind, string> = {
-  image: "Character sheet / reference image",
-  audio: "Voice reference",
-  video: "Reference video",
-};
-
 interface ProjectResourcesPanelProps {
   project: ProjectDetail;
 }
@@ -22,6 +17,7 @@ interface ProjectResourcesPanelProps {
 // (see backend director/models.py's ProjectResource) -- distinct from a
 // Clip's own reference images, which only that one clip's render sees.
 export function ProjectResourcesPanel({ project }: ProjectResourcesPanelProps) {
+  const { t } = useI18n();
   const createResource = useCreateProjectResource();
   const deleteResource = useDeleteProjectResource();
   const convertToReference = useConvertToReference();
@@ -34,11 +30,10 @@ export function ProjectResourcesPanel({ project }: ProjectResourcesPanelProps) {
 
   return (
     <fieldset className="director-resources-panel">
-      <legend>Shared resources</legend>
+      <legend>{t("director.sharedResources", "Shared resources")}</legend>
       <p className="hint">
-        Character sheets, voice references, and world/style images or clips every reference
-        clip's render can draw on — insert their token (e.g. <code>&lt;Picture 1&gt;</code>) into
-        a clip's prompt. Adding one requires every clip in the project to be a reference clip.
+        {t("director.sharedResourcesHint", "Reusable character, voice, world and style references for every reference-mode clip. Insert tokens such as")}{" "}
+        <code>&lt;Picture 1&gt;</code>{" "}{t("director.sharedResourcesHintEnd", "in clip prompts. Adding one requires every generated clip to use reference mode.")}
       </p>
       {project.resources.length > 0 && (
         <ul className="reference-list director-resource-list">
@@ -52,7 +47,7 @@ export function ProjectResourcesPanel({ project }: ProjectResourcesPanelProps) {
                 type="button"
                 onClick={() => deleteResource.mutate({ projectId: project.id, resourceId: resource.id })}
               >
-                Remove
+                {t("common.remove", "Remove")}
               </button>
             </li>
           ))}
@@ -61,20 +56,18 @@ export function ProjectResourcesPanel({ project }: ProjectResourcesPanelProps) {
       {hasNonReferenceClips ? (
         <div>
           <p className="hint">
-            This project has non-reference clips — delete them, or convert every clip to
-            reference mode, before adding a shared reference. Converting keeps every clip and its
-            own references intact; it only changes how a clip's own image reference (if any) is
-            addressed -- as a <code>&lt;Picture N&gt;</code> token in its prompt, rather than an
-            implicit first frame.
+            {t("director.convertReferencesHint", "This project has non-reference generated clips. Convert them before adding shared references; existing videos and clip references are preserved.")}
           </p>
           <button
             type="button"
             onClick={() => convertToReference.mutate(project.id)}
             disabled={convertToReference.isPending}
           >
-            {convertToReference.isPending ? "Converting…" : "Convert all clips to reference mode"}
+            {convertToReference.isPending
+              ? t("director.converting", "Converting…")
+              : t("director.convertAllReferences", "Convert all clips to reference mode")}
           </button>
-          {convertToReference.isError && <p className="error">Couldn't convert. Try again.</p>}
+          {convertToReference.isError && <p className="error">{t("director.convertError", "Couldn't convert. Try again.")}</p>}
         </div>
       ) : (
         <div className="director-resource-add-row">
@@ -85,7 +78,7 @@ export function ProjectResourcesPanel({ project }: ProjectResourcesPanelProps) {
               className="file-slot"
               onFiles={(files) => createResource.mutate({ projectId: project.id, kind, file: files[0] })}
             >
-              + {KIND_LABEL[kind]}
+              + {t(`director.resource.${kind}`, kind === "image" ? "Character sheet / reference image" : kind === "audio" ? "Voice reference" : "Reference video")}
               <input
                 type="file"
                 accept={KIND_ACCEPT[kind]}
@@ -99,7 +92,7 @@ export function ProjectResourcesPanel({ project }: ProjectResourcesPanelProps) {
           ))}
         </div>
       )}
-      {createResource.isError && <p className="error">Couldn't add that resource. Try again.</p>}
+      {createResource.isError && <p className="error">{t("director.resourceError", "Couldn't add that resource. Try again.")}</p>}
     </fieldset>
   );
 }

@@ -17,7 +17,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 
-from generation.models import Mode, RenderDuration, RenderPreset, _random_upload_path
+from generation.models import Mode, ModelVariant, RenderDuration, RenderPreset, _random_upload_path
 from generation.models import GenerationJob, ReferenceAsset
 from generation.resolution import DEFAULT_ASPECT_RATIO
 
@@ -87,6 +87,12 @@ class Project(models.Model):
         "e.g. it's ignored if TURBO_LEVEL is None (not offered) and forced True regardless if "
         "TURBO_LEVEL is 2. Changing it marks every clip dirty but does NOT recompute width/"
         "height (unlike aspect_ratio/quality_label) -- turbo doesn't change resolution.",
+    )
+    model_variant = models.CharField(
+        max_length=8,
+        choices=ModelVariant.choices,
+        default=ModelVariant.FP8,
+        help_text="The FP8/INT8 quantization used by every new or re-rendered Clip in this project.",
     )
     script_text = models.TextField(
         blank=True,

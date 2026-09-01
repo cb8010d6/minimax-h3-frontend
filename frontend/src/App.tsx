@@ -8,6 +8,7 @@ import { ProjectBoard, ProjectListScreen } from "./features/director";
 import { GenerateScreen } from "./features/generate";
 import { JobModal, QueueSidebar } from "./features/queue";
 import { LogOutIcon } from "./features/shared/Icon";
+import { LanguageToggle, useI18n } from "./i18n";
 import "./App.css";
 
 function MainLayout() {
@@ -60,11 +61,12 @@ function MainLayout() {
 
 function App() {
   const me = useCurrentUser();
+  const { t } = useI18n();
 
   if (me.isLoading) {
     return (
       <section id="center">
-        <p>Loading…</p>
+        <p>{t("common.loading", "Loading…")}</p>
       </section>
     );
   }
@@ -72,7 +74,7 @@ function App() {
   if (me.isError) {
     return (
       <section id="center">
-        <p className="error">Couldn't reach the server. Try reloading.</p>
+        <p className="error">{t("app.loadingError", "Couldn't reach the server. Try reloading.")}</p>
       </section>
     );
   }
@@ -88,15 +90,16 @@ function App() {
           <span className="app-mark" aria-hidden="true">
             M3
           </span>
-          <span className="app-title">Minimax H3</span>
+           <span className="app-title">{t("app.title", "Minimax H3")}</span>
         </div>
         <div className="app-nav-links">
           <NavLink to="/" end>
-            Generate
+            {t("nav.generate", "Generate")}
           </NavLink>
-          <NavLink to="/director">Director</NavLink>
-          {me.data.is_staff && <NavLink to="/manage">Admin</NavLink>}
+          <NavLink to="/director">{t("nav.director", "Director")}</NavLink>
+          {me.data.is_staff && <NavLink to="/manage">{t("nav.admin", "Admin")}</NavLink>}
         </div>
+        <LanguageToggle />
         <span className="app-user">
           <span className="app-user-avatar" aria-hidden="true">
             {(me.data.username ?? "?").slice(0, 1).toUpperCase()}

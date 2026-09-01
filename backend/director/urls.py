@@ -6,7 +6,9 @@ urlpatterns = [
     path("director/projects/", api.projects, name="director_projects"),
     path("director/job_memberships/", api.job_memberships, name="director_job_memberships"),
     path("director/from_job/<int:job_id>/", api.create_project_from_job, name="director_create_project_from_job"),
+    path("director/from_jobs/", api.create_project_from_jobs, name="director_create_project_from_jobs"),
     path("director/projects/<int:project_id>/", api.project_detail, name="director_project_detail"),
+    path("director/projects/<int:project_id>/import_jobs/", api.import_jobs, name="director_import_jobs"),
     path("director/projects/<int:project_id>/resources/", api.project_resources, name="director_project_resources"),
     path(
         "director/projects/<int:project_id>/convert_to_reference/",

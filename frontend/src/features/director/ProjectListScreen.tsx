@@ -3,30 +3,32 @@ import { useNavigate } from "react-router-dom";
 import { useCreateDirectorProject, useDeleteDirectorProject, useDirectorProjects } from "../../api/directorQueries";
 import type { Project } from "../../api/directorTypes";
 import { CloseIcon, TrashIcon } from "../shared/Icon";
+import { useI18n } from "../../i18n";
 
-function relativeTime(iso: string): string {
+function relativeTime(iso: string, isChinese: boolean): string {
   const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (diffMin < 1) return "just now";
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 1) return isChinese ? "刚刚" : "just now";
+  if (diffMin < 60) return isChinese ? `${diffMin} 分钟前` : `${diffMin}m ago`;
   const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return isChinese ? `${diffHr} 小时前` : `${diffHr}h ago`;
   return new Date(iso).toLocaleDateString();
 }
 
-function formatEta(seconds: number): string {
-  if (seconds < 60) return `~${Math.round(seconds)}s left`;
+function formatEta(seconds: number, isChinese: boolean): string {
+  if (seconds < 60) return isChinese ? `约剩 ${Math.round(seconds)} 秒` : `~${Math.round(seconds)}s left`;
   const minutes = Math.round(seconds / 60);
-  return `~${minutes}m left`;
+  return isChinese ? `约剩 ${minutes} 分钟` : `~${minutes}m left`;
 }
 
-function progressLabel(project: Project, done: number, total: number, active: number): string {
-  const parts = [`${done}/${total} rendered`];
-  if (active > 0) parts.push("rendering…");
-  else if (project.eta_seconds) parts.push(formatEta(project.eta_seconds));
+function progressLabel(project: Project, done: number, total: number, active: number, isChinese: boolean): string {
+  const parts = [isChinese ? `已完成 ${done}/${total}` : `${done}/${total} rendered`];
+  if (active > 0) parts.push(isChinese ? "生成中…" : "rendering…");
+  else if (project.eta_seconds) parts.push(formatEta(project.eta_seconds, isChinese));
   return parts.join(" · ");
 }
 
 export function ProjectListScreen() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const projects = useDirectorProjects();
   const createProject = useCreateDirectorProject();
@@ -40,29 +42,28 @@ export function ProjectListScreen() {
 
   return (
     <section className="screen director-list-screen">
-      <h1>Director Mode</h1>
+      <h1>{t("director.title", "Director Mode")}</h1>
       <p className="hint">
-        Sequence multiple clips into one long video, with continuity between scenes flagged as
-        continuing the one before them.
+        {t("director.description", "Sequence multiple clips into one long video, with optional continuity between adjacent scenes.")}
       </p>
 
       <form className="director-new-project-form" onSubmit={(e) => void handleCreate(e)}>
         <input
           type="text"
-          placeholder="New project title…"
+          placeholder={t("director.newTitle", "New project title…")}
           value={newTitle}
           onChange={(e) => setNewTitle(e.target.value)}
         />
         <button type="submit" className="button button-primary" disabled={createProject.isPending}>
-          {createProject.isPending ? "Creating…" : "New project"}
+          {createProject.isPending ? t("director.creating", "Creating…") : t("director.newProject", "New project")}
         </button>
       </form>
-      {createProject.isError && <p className="error">Couldn't create that project. Try again.</p>}
+      {createProject.isError && <p className="error">{t("director.createError", "Couldn't create that project. Try again.")}</p>}
 
-      {projects.isLoading && <p className="hint">Loading…</p>}
-      {projects.isError && <p className="error">Couldn't load your projects.</p>}
+      {projects.isLoading && <p className="hint">{t("common.loading", "Loading…")}</p>}
+      {projects.isError && <p className="error">{t("director.loadError", "Couldn't load your projects.")}</p>}
       {projects.data?.length === 0 && (
-        <p className="empty-state">No projects yet — create one above to start sequencing clips.</p>
+        <p className="empty-state">{t("director.empty", "No projects yet — create one above to start sequencing clips.")}</p>
       )}
 
       <ul className="director-project-list">
@@ -75,6 +76,7 @@ export function ProjectListScreen() {
 }
 
 function DeleteProjectModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const { t } = useI18n();
   const deleteProject = useDeleteDirectorProject();
   const [deleteRelatedJobs, setDeleteRelatedJobs] = useState(false);
 
@@ -86,13 +88,14 @@ function DeleteProjectModal({ project, onClose }: { project: Project; onClose: (
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+        <button type="button" className="modal-close" onClick={onClose} aria-label={t("common.close", "Close")}>
           <CloseIcon size={16} />
         </button>
-        <h2>Delete project?</h2>
+        <h2>{t("director.deleteProject", "Delete project?")}</h2>
         <p className="hint">
-          "{project.title || `Project ${project.id}`}" and its clips will be removed. This can't be
-          undone.
+          {t("director.deleteWarning", "“{title}” and its clips will be removed. This can't be undone.", {
+            title: project.title || `${t("director.untitled", "Untitled project")} #${project.id}`,
+          })}
         </p>
         <label className="clip-editor-continues-toggle">
           <input
@@ -100,17 +103,15 @@ function DeleteProjectModal({ project, onClose }: { project: Project; onClose: (
             checked={deleteRelatedJobs}
             onChange={(e) => setDeleteRelatedJobs(e.target.checked)}
           />
-          Also delete the rendered videos for this project's clips
+          {t("director.deleteVideos", "Also delete the rendered videos for this project's clips")}
           <span className="hint">
-            {" "}
-            — otherwise they stay in your Generate queue, just no longer tagged to this project. A
-            video that's still queued/processing is never deleted either way.
+            {" "}{t("director.deleteVideosHint", "— otherwise they stay in Generate history without this project tag. Active videos are never deleted.")}
           </span>
         </label>
-        {deleteProject.isError && <p className="error">Couldn't delete that project. Try again.</p>}
+        {deleteProject.isError && <p className="error">{t("director.deleteError", "Couldn't delete that project. Try again.")}</p>}
         <div className="modal-actions">
           <button type="button" onClick={onClose} disabled={deleteProject.isPending}>
-            Cancel
+            {t("common.cancel", "Cancel")}
           </button>
           <button
             type="button"
@@ -118,7 +119,7 @@ function DeleteProjectModal({ project, onClose }: { project: Project; onClose: (
             onClick={() => void handleDelete()}
             disabled={deleteProject.isPending}
           >
-            {deleteProject.isPending ? "Deleting…" : "Yes, delete"}
+            {deleteProject.isPending ? t("director.deleting", "Deleting…") : t("director.confirmDelete", "Yes, delete")}
           </button>
         </div>
       </div>
@@ -127,6 +128,7 @@ function DeleteProjectModal({ project, onClose }: { project: Project; onClose: (
 }
 
 function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void }) {
+  const { t, isChinese } = useI18n();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   const total = project.clip_count ?? 0;
@@ -138,10 +140,10 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
   return (
     <li className="director-project-card">
       <button type="button" className="director-project-card-open" onClick={onOpen}>
-        <span className="director-project-card-title">{project.title || `Project ${project.id}`}</span>
+        <span className="director-project-card-title">{project.title || `${t("director.untitled", "Untitled project")} #${project.id}`}</span>
         <span className="director-project-card-meta">
-          Updated {relativeTime(project.updated_at)}
-          {total > 0 && <> · {progressLabel(project, done, total, active)}</>}
+          {t("director.updated", "Updated {time}", { time: relativeTime(project.updated_at, isChinese) })}
+          {total > 0 && <> · {progressLabel(project, done, total, active, isChinese)}</>}
         </span>
         {total > 0 && (
           <div className="job-progress-track director-project-progress-track">
@@ -159,7 +161,7 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
             setDeleteModalOpen(true);
           }}
         >
-          <TrashIcon size={13} /> Delete
+          <TrashIcon size={13} /> {t("common.delete", "Delete")}
         </button>
       </div>
 

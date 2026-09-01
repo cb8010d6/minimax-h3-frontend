@@ -2,6 +2,25 @@
 // see ARCHITECTURE.md's "Backend apps" section for what each field means.
 
 export type Mode = "t2v" | "i2v" | "r2v" | "t2i" | "r2i" | "t2a" | "r2a";
+export type ModelVariant = "fp8" | "int8";
+
+export interface GpuWorker {
+  id: number;
+  host: string;
+  cuda_index: number;
+  gpu_uuid: string;
+  name: string;
+  state: "offline" | "free" | "standby" | "starting" | "ready" | "busy" | "external" | "error";
+  port: number;
+  loaded_model: string;
+  active_model: string;
+  memory_used_mb: number;
+  memory_total_mb: number;
+  utilization_percent: number;
+  current_job_id: number | null;
+  last_seen_at: string | null;
+  last_error: string;
+}
 
 export const MODE_LABELS: Record<Mode, string> = {
   t2v: "Video from text",
@@ -103,6 +122,8 @@ export interface AppConfig {
   // fixed enum from config rather than part of the preset/duration catalog.
   aspect_ratios: AspectRatioOption[];
   default_aspect_ratio: string;
+  available_model_keys: string[];
+  gpu_model_idle_seconds: number;
   // null: not offered. 0: optional toggle, default off. 1: optional toggle,
   // default on. 2: forced on for every job, no toggle to show. See
   // extras.md#spectrum.
@@ -159,9 +180,23 @@ export interface RenderPreset {
   mode: Mode;
   label: string; // e.g. "Draft", "Standard", "High quality"
   megapixels: number;
+  resolution_policy: "fixed" | "h3_native";
   steps: number;
   is_draft: boolean;
   durations: RenderDuration[];
+}
+
+export interface ResolutionPreview {
+  width: number;
+  height: number;
+  aspect_ratio: string;
+  preset_id: number;
+  resolution_policy: "fixed" | "h3_native";
+  actual_megapixels: number;
+  native_max_width: number;
+  native_max_height: number;
+  min_duration_seconds: number;
+  max_duration_seconds: number;
 }
 
 export interface QueueEstimate {
@@ -253,6 +288,8 @@ export interface GenerationJob {
   // Also means this job's steps were overridden from its preset's own
   // value. estimated_seconds above does NOT account for it.
   use_turbo: boolean;
+  model_variant: ModelVariant;
+  assigned_worker: { id: number; host: string; cuda_index: number } | null;
   video_url: string | null;
   // Small poster image for video-content-type jobs -- null for image/audio
   // jobs (video_url already works as a thumbnail for those) and for jobs

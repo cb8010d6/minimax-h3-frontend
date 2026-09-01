@@ -21,7 +21,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from generation.api import _MAX_REFERENCE_AUDIO, _MAX_REFERENCE_IMAGES, _MAX_REFERENCE_VIDEO, _parse_bool
-from generation.models import GenerationJob, Mode, ReferenceAsset, RenderDuration
+from generation.models import GenerationJob, Mode, ModelVariant, ReferenceAsset, RenderDuration
 from generation.resolution import ASPECT_RATIO_VALUES, DEFAULT_ASPECT_RATIO, compute_resolution, is_valid_aspect_ratio
 from integrations import assembly, comfyui, llm
 
@@ -94,6 +94,10 @@ class ProjectSerializer(serializers.Serializer):
         "extras.md#turbo, GET /api/config/'s turbo_level. Same project-wide reasoning as "
         "quality_label -- not chosen per-clip."
     )
+    model_variant = serializers.ChoiceField(
+        choices=ModelVariant.choices,
+        help_text="The FP8/INT8 quantization used by every new or re-rendered Clip in the project.",
+    )
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
     clip_count = serializers.IntegerField(
@@ -122,6 +126,17 @@ class JobMembershipSerializer(serializers.Serializer):
     project_id = serializers.IntegerField()
     project_title = serializers.CharField(
         allow_blank=True, help_text="May be blank -- a Director project's own title is optional."
+    )
+
+
+class ImportJobsRequestSerializer(serializers.Serializer):
+    job_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False)
+    title = serializers.CharField(required=False, allow_blank=True, max_length=200)
+
+
+class AssembleRequestSerializer(serializers.Serializer):
+    clip_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False
     )
 
 
@@ -230,6 +245,7 @@ def _serialize_project(project: Project, *, detail: bool = False) -> dict:
         "aspect_ratio": project.aspect_ratio,
         "quality_label": project.quality_label,
         "use_turbo": project.use_turbo,
+        "model_variant": project.model_variant,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         # Only present (non-None) when `project` came from projects()' GET
@@ -305,6 +321,10 @@ def projects(request):
     if quality_label and quality_label not in available_labels:
         return Response({"error": f"quality_label must be one of {available_labels}."}, status=400)
 
+    model_variant = str(request.data.get("model_variant", ModelVariant.FP8)).lower()
+    if model_variant not in ModelVariant.values:
+        return Response({"error": "model_variant must be fp8 or int8."}, status=400)
+
     project = Project.objects.create(
         user=request.user,
         title=title,
@@ -312,6 +332,7 @@ def projects(request):
         aspect_ratio=aspect_ratio,
         quality_label=quality_label,
         use_turbo=_parse_bool(request.data.get("use_turbo", False)),
+        model_variant=model_variant,
     )
     return Response(_serialize_project(project, detail=True), status=201)
 
@@ -344,6 +365,26 @@ def job_memberships(request):
     )
 
 
+def _selected_jobs(request) -> list[GenerationJob]:
+    """Returns request.data.job_ids in the user's exact requested order."""
+    job_ids = request.data.get("job_ids")
+    if (
+        not isinstance(job_ids, list)
+        or not job_ids
+        or any(isinstance(job_id, bool) or not isinstance(job_id, int) or job_id < 1 for job_id in job_ids)
+    ):
+        raise services.PlanError("job_ids must be a non-empty list of positive integers.")
+    if len(job_ids) != len(set(job_ids)):
+        raise services.PlanError("job_ids contains duplicates.")
+    jobs_by_id = {
+        job.id: job
+        for job in GenerationJob.objects.filter(id__in=job_ids, user=request.user).select_related("preset", "duration")
+    }
+    if len(jobs_by_id) != len(job_ids):
+        raise services.PlanError("One or more selected renders do not exist or are not accessible.")
+    return [jobs_by_id[job_id] for job_id in job_ids]
+
+
 @extend_schema(
     summary="Create a new Director project from an existing standalone job",
     description="Wraps an already-rendered job from the main Generate page as a new project's "
@@ -364,6 +405,47 @@ def create_project_from_job(request, job_id: int):
 
 
 @extend_schema(
+    summary="Create a new Director project from several existing standalone jobs",
+    description="Preserves job_ids order and reuses every successful video render as an already-clean, "
+    "independent clip. No generation job is queued. Every selected job must belong to the current "
+    "user and not already be tagged to a Director project.",
+    request=ImportJobsRequestSerializer,
+    responses={201: ProjectDetailSerializer, 400: ErrorResponseSerializer},
+    tags=["director"],
+)
+@api_view(["POST"])
+def create_project_from_jobs(request):
+    try:
+        jobs = _selected_jobs(request)
+        project = services.create_project_from_jobs(jobs, title=str(request.data.get("title", "")))
+    except services.PlanError as exc:
+        return Response({"error": str(exc)}, status=400)
+    return Response(_serialize_project(project, detail=True), status=201)
+
+
+@extend_schema(
+    summary="Append several existing standalone jobs to a Director project",
+    description="Adds successful video renders after the project's current final clip, preserving "
+    "job_ids order and reusing their media without re-rendering.",
+    request=ImportJobsRequestSerializer,
+    responses={201: ClipSerializer(many=True), 400: ErrorResponseSerializer, 404: OpenApiResponse(description="Not found.")},
+    tags=["director"],
+)
+@api_view(["POST"])
+def import_jobs(request, project_id: int):
+    project = _get_project(request, project_id)
+    try:
+        jobs = _selected_jobs(request)
+        services.append_jobs_to_project(project, jobs)
+    except services.PlanError as exc:
+        return Response({"error": str(exc)}, status=400)
+    return Response(
+        [_serialize_clip(clip) for clip in project.clips.select_related("current_job").order_by("order")],
+        status=201,
+    )
+
+
+@extend_schema(
     methods=["GET"],
     summary="Get a Director project (with its resources and clips)",
     responses={200: ProjectDetailSerializer, 404: OpenApiResponse(description="Not found.")},
@@ -372,8 +454,8 @@ def create_project_from_job(request, job_id: int):
 @extend_schema(
     methods=["PATCH"],
     summary="Update a Director project",
-    description="Changing overarching_prompt marks every Clip in the project dirty -- every "
-    "Clip's render depends on it. Changing aspect_ratio/quality_label additionally recomputes "
+    description="Changing overarching_prompt/model_variant marks every Clip in the project dirty -- every "
+    "Clip's render depends on them. Changing aspect_ratio/quality_label additionally recomputes "
     "every Clip's preset/width/height (see director/services.py's recompute_project_resolutions).",
     responses={200: ProjectDetailSerializer, 404: OpenApiResponse(description="Not found.")},
     tags=["director"],
@@ -431,6 +513,12 @@ def project_detail(request, project_id: int):
             use_turbo = _parse_bool(request.data["use_turbo"])
             if use_turbo != project.use_turbo:
                 project.use_turbo = use_turbo
+        if "model_variant" in request.data:
+            model_variant = str(request.data["model_variant"]).lower()
+            if model_variant not in ModelVariant.values:
+                return Response({"error": "model_variant must be fp8 or int8."}, status=400)
+            if model_variant != project.model_variant:
+                project.model_variant = model_variant
                 dirty = True
         project.save()
         if resolution_changed:
@@ -923,9 +1011,9 @@ def split_clip(request, clip_id: int):
 
 @extend_schema(
     summary="Reorder a clip within its project",
-    description="Renumbers every sibling clip and always dirties the moved clip -- chain "
-    "semantics are positional (continues_previous means 'continue from whichever clip is now "
-    "immediately before me'), so a reorder can change what it actually continues from.",
+    description="Renumbers every sibling clip. Already-rendered independent clips remain clean; "
+    "only continuation clips whose positional predecessor actually changed (and their continuation "
+    "cascade) are dirtied.",
     responses={200: ClipSerializer(many=True), 400: ErrorResponseSerializer, 404: OpenApiResponse(description="Not found.")},
     tags=["director"],
 )
@@ -940,16 +1028,32 @@ def reorder_clip(request, clip_id: int):
         siblings = list(
             Clip.objects.select_for_update()
             .filter(project_id=clip.project_id)
-            .exclude(id=clip.id)
             .order_by("order")
         )
+        old_predecessors: dict[int, int | None] = {}
+        predecessor_id = None
+        for sibling in siblings:
+            old_predecessors[sibling.id] = predecessor_id
+            predecessor_id = sibling.id
+
+        moving = next(sibling for sibling in siblings if sibling.id == clip.id)
+        siblings.remove(moving)
         new_order = max(0, min(new_order, len(siblings)))
-        siblings.insert(new_order, clip)
+        siblings.insert(new_order, moving)
         for index, sibling in enumerate(siblings):
             if sibling.order != index:
                 sibling.order = index
                 sibling.save(update_fields=["order"])
-        services.mark_dirty_cascade(clip)
+
+        predecessor_id = None
+        changed_continuations: list[Clip] = []
+        for sibling in siblings:
+            if sibling.continues_previous and old_predecessors.get(sibling.id) != predecessor_id:
+                changed_continuations.append(sibling)
+            predecessor_id = sibling.id
+        for changed in changed_continuations:
+            changed.refresh_from_db()
+            services.mark_dirty_cascade(changed)
 
     return Response([_serialize_clip(c) for c in Clip.objects.filter(project_id=clip.project_id).order_by("order")])
 
@@ -1212,11 +1316,11 @@ def apply_plan(request, project_id: int):
 
 
 @extend_schema(
-    summary="Assemble every clip into one downloadable video, in order",
-    description="Concatenates every clip's rendered video, in board order, into one MP4 (see "
+    summary="Assemble selected clips into one downloadable video, in board order",
+    description="Concatenates clip_ids (or every clip when omitted) in board order into one MP4 (see "
     "integrations/assembly.py) and stores it as the project's assembled_video_file, replacing "
-    "any previous export. Requires every clip to have a rendered video and none to be dirty -- "
-    "render everything first.",
+    "any previous export. Every selected clip must have a rendered video and be clean.",
+    request=AssembleRequestSerializer,
     responses={
         200: ProjectDetailSerializer,
         400: ErrorResponseSerializer,
@@ -1230,6 +1334,23 @@ def apply_plan(request, project_id: int):
 def assemble_project(request, project_id: int):
     project = _get_project(request, project_id)
     clips = list(project.clips.select_related("current_job").order_by("order"))
+    requested_ids = request.data.get("clip_ids")
+    if requested_ids is not None:
+        if (
+            not isinstance(requested_ids, list)
+            or not requested_ids
+            or any(
+                isinstance(clip_id, bool) or not isinstance(clip_id, int) or clip_id < 1
+                for clip_id in requested_ids
+            )
+            or len(requested_ids) != len(set(requested_ids))
+        ):
+            return Response({"error": "clip_ids must be a non-empty list of unique positive integers."}, status=400)
+        requested_set = set(requested_ids)
+        selected_clips = [clip for clip in clips if clip.id in requested_set]
+        if len(selected_clips) != len(requested_set):
+            return Response({"error": "One or more selected clips do not belong to this project."}, status=400)
+        clips = selected_clips
     if not clips:
         return Response({"error": "This project has no clips yet."}, status=400)
 

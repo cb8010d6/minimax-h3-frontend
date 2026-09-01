@@ -630,6 +630,7 @@ def _build_job_for_clip(clip: Clip) -> GenerationJob:
         duration_seconds=clip.duration.duration_seconds,
         estimated_seconds=clip.duration.estimated_render_seconds,
         use_turbo=use_turbo,
+        model_variant=clip.project.model_variant,
         continuation_params=chain_params,
     )
     # Permanent, unlike clip.current_job below -- see JobProjectTag's own
@@ -844,76 +845,115 @@ def split_clip(clip: Clip) -> Clip:
     return new_clip
 
 
-def create_project_from_job(job: GenerationJob) -> Project:
-    """Wraps an already-rendered, standalone GenerationJob (from the main
-    Generate page) as a brand-new Director project with that job as its
-    first, already-clean Clip -- backs "Create Director project" on a
-    standalone job in the queue/history. Reuses the existing render
-    outright (current_job=job, needs_render=False) rather than queuing a
-    new one: the whole point is not to throw away an already-good render
-    just because it didn't start inside Director.
+def _validate_import_job(job: GenerationJob, *, user_id: int) -> None:
+    """Checks one already-rendered job before it is placed on a board.
 
-    Raises PlanError if `job` can't become a Director clip: its mode
-    isn't one of Director's own video modes (_VIDEO_MODES -- image/audio
-    jobs have no place on a video timeline), it hasn't successfully
-    finished, or it already belongs to some other Clip as current_job
-    (see Clip.current_job's related_name="director_clip" -- a job already
-    on a board shouldn't silently get a second, disconnected Clip made
-    from it; director/api.py's own view surfaces the project it already
-    belongs to instead of offering this action once that's true).
-
-    The new Clip's chain_run_name/chain_scene_number are deliberately left
-    blank -- `job` was never rendered through Director's chain-aware path
-    (see _resolve_chain_params()), so there's no real ComfyUI checkpoint
-    to name. A later Clip continuing from this one naturally falls back to
-    the last-frame-image method instead of true motion continuity, same
-    as for any other predecessor with no real checkpoint of its own -- see
-    _build_job_for_clip()'s own "Graceful fallback" paragraph.
+    JobProjectTag, rather than only Clip.current_job, is the authoritative
+    membership check: a Director re-render can move Clip.current_job away
+    from an older job while its permanent tag intentionally remains (see
+    JobProjectTag's docstring). Re-importing that superseded job would hit
+    the tag's one-to-one constraint and, more importantly, make history
+    claim the same render belongs to two projects.
     """
+    if job.user_id != user_id:
+        raise PlanError("Every selected render must belong to the project owner.")
     if job.mode not in _VIDEO_MODES:
         raise PlanError(f"{Mode(job.mode).label} jobs can't become a Director clip -- only video modes can.")
     if job.status != GenerationJob.Status.DONE or job.error_message or not job.video_file:
         raise PlanError("Only a successfully finished render can become a Director clip.")
-    if job.director_clip.exists():
+    if job.director_clip.exists() or JobProjectTag.objects.filter(job_id=job.id).exists():
         raise PlanError("This job already belongs to a Director project.")
 
+
+def _copy_job_references(job: GenerationJob, clip: Clip) -> None:
+    """Copies reference files so deleting the source job never breaks Clip."""
+    for ref in job.references.order_by("kind", "order"):
+        ref.file.open("rb")
+        try:
+            content = ref.file.read()
+        finally:
+            ref.file.close()
+        new_ref = ClipReferenceAsset(clip=clip, kind=ref.kind, order=ref.order)
+        new_ref.file.save(ref.file.name.rsplit("/", 1)[-1], ContentFile(content), save=True)
+
+
+def append_jobs_to_project(project: Project, jobs: list[GenerationJob]) -> list[Clip]:
+    """Appends successful standalone video jobs as clean, independent Clips.
+
+    Input order is preserved exactly. Imported clips never claim real H3
+    continuation state, so continues_previous=False and their existing
+    renders remain immediately exportable. A user can opt into continuity
+    later in the editor, at which point the ordinary dirty/render rules
+    apply. This powers both multi-select history import and
+    create_project_from_jobs() below.
+    """
+    jobs = list(jobs)
+    if not jobs:
+        raise PlanError("Select at least one finished video.")
+    job_ids = [job.id for job in jobs]
+    if len(job_ids) != len(set(job_ids)):
+        raise PlanError("The selected render list contains duplicates.")
+
+    with transaction.atomic():
+        project = Project.objects.select_for_update().get(id=project.id)
+        locked_by_id = {
+            job.id: job
+            for job in GenerationJob.objects.select_for_update()
+            .select_related("preset", "duration")
+            .filter(id__in=job_ids)
+        }
+        if len(locked_by_id) != len(job_ids):
+            raise PlanError("One or more selected renders no longer exist.")
+        locked_jobs = [locked_by_id[job_id] for job_id in job_ids]
+        for job in locked_jobs:
+            _validate_import_job(job, user_id=project.user_id)
+
+        last_order = project.clips.order_by("-order").values_list("order", flat=True).first()
+        next_order = 0 if last_order is None else last_order + 1
+        clips: list[Clip] = []
+        for offset, job in enumerate(locked_jobs):
+            clip = Clip.objects.create(
+                project=project,
+                order=next_order + offset,
+                continues_previous=False,
+                mode=job.mode,
+                prompt=job.raw_prompt,
+                improved_prompt=job.improved_prompt,
+                preset=job.preset,
+                duration=job.duration,
+                width=job.width,
+                height=job.height,
+                needs_render=False,
+                current_job=job,
+            )
+            _copy_job_references(job, clip)
+            JobProjectTag.objects.create(job=job, project=project)
+            clips.append(clip)
+    return clips
+
+
+def create_project_from_jobs(jobs: list[GenerationJob], *, title: str = "") -> Project:
+    """Creates one Director project from several history renders, in order."""
+    jobs = list(jobs)
+    if not jobs:
+        raise PlanError("Select at least one finished video.")
+    first = jobs[0]
+    project_title = title.strip() or first.title.strip() or first.raw_prompt.strip()[:80]
     with transaction.atomic():
         project = Project.objects.create(
-            user=job.user,
-            title=job.title.strip() or job.raw_prompt.strip()[:80],
-            aspect_ratio=job.aspect_ratio,
-            quality_label=job.preset.label,
+            user=first.user,
+            title=project_title,
+            aspect_ratio=first.aspect_ratio,
+            quality_label=first.preset.label,
+            model_variant=first.model_variant,
         )
-        clip = Clip.objects.create(
-            project=project,
-            order=0,
-            continues_previous=False,
-            mode=job.mode,
-            prompt=job.raw_prompt,
-            improved_prompt=job.improved_prompt,
-            preset=job.preset,
-            duration=job.duration,
-            width=job.width,
-            height=job.height,
-            needs_render=False,
-            current_job=job,
-        )
-        for ref in job.references.order_by("kind", "order"):
-            ref.file.open("rb")
-            try:
-                content = ref.file.read()
-            finally:
-                ref.file.close()
-            new_ref = ClipReferenceAsset(clip=clip, kind=ref.kind, order=ref.order)
-            new_ref.file.save(ref.file.name.rsplit("/", 1)[-1], ContentFile(content), save=True)
-
-        # Same permanent record _build_job_for_clip() creates for a normal
-        # render -- see JobProjectTag's own docstring. Without this, `job`
-        # would only be tagged for as long as it stays this clip's
-        # current_job, same gap this whole model exists to close.
-        JobProjectTag.objects.create(job=job, project=project)
-
+        append_jobs_to_project(project, jobs)
     return project
+
+
+def create_project_from_job(job: GenerationJob) -> Project:
+    """Backward-compatible one-job wrapper for the original queue action."""
+    return create_project_from_jobs([job])
 
 
 def delete_project(project: Project, *, delete_related_jobs: bool = False) -> None:

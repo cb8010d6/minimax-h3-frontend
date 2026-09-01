@@ -1,7 +1,7 @@
 // Shapes returned by backend/director/api.py -- same relationship to that
 // module as api/types.ts has to generation/api.py.
 
-import type { JobPhase, JobStatus, Mode, ReferenceKind } from "./types";
+import type { JobPhase, JobStatus, Mode, ModelVariant, ReferenceKind } from "./types";
 
 export interface ProjectResource {
   id: number;
@@ -76,6 +76,9 @@ export interface Project {
   // own steps entirely when it applies. Still gated server-side by
   // GET /api/config/'s turbo_level.
   use_turbo: boolean;
+  // Applied to every future render/re-render; existing imported videos keep
+  // the variant they were originally generated with until re-rendered.
+  model_variant: ModelVariant;
   created_at: string;
   updated_at: string;
   // Only set by the list endpoint (useDirectorProjects) -- null on a

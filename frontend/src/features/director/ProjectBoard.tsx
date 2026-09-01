@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useAssembleProject,
@@ -13,12 +13,15 @@ import {
 } from "../../api/directorQueries";
 import { useConfig, usePresets, useRefinePrompt } from "../../api/queries";
 import { CONTINUATION_CAPABLE_MODES, MODE_LABELS } from "../../api/types";
+import type { ModelVariant } from "../../api/types";
 import type { Clip } from "../../api/directorTypes";
 import { CloseIcon } from "../shared/Icon";
 import { InfoTooltip } from "../shared/InfoTooltip";
+import { useI18n } from "../../i18n";
 import { ClipBox } from "./ClipBox";
 import { ClipEditorPanel } from "./ClipEditorPanel";
 import { ProjectResourcesPanel } from "./ProjectResourcesPanel";
+import { availableDirectorModelVariants, mergeDirectorQualityPresets } from "./directorSettings";
 import { ScriptPlanModal } from "./ScriptPlanModal";
 
 // Director clips are scoped to the video-content modes only (see this
@@ -55,6 +58,7 @@ function buildPreviousClipsContext(clips: Clip[], beforeOrder: number): string {
 }
 
 export function ProjectBoard() {
+  const { t } = useI18n();
   const { projectId: projectIdParam } = useParams<{ projectId: string }>();
   // Number(undefined) and Number() of a malformed param both come out NaN --
   // still type `number` (never null/undefined), so this can be used
@@ -81,10 +85,12 @@ export function ProjectBoard() {
 
   // Prefetched so "+ Add clip" can create one immediately with a sensible
   // default duration, without a request-then-wait step in between.
+  const projectModelVariant = project.data?.model_variant ?? "fp8";
+  const projectAspectRatio = project.data?.aspect_ratio ?? null;
   const presetsByMode = {
-    t2v: usePresets("t2v"),
-    i2v: usePresets("i2v"),
-    r2v: usePresets("r2v"),
+    t2v: usePresets("t2v", projectModelVariant, projectAspectRatio),
+    i2v: usePresets("i2v", projectModelVariant, projectAspectRatio),
+    r2v: usePresets("r2v", projectModelVariant, projectAspectRatio),
   };
 
   const [selectedClipId, setSelectedClipId] = useState<number | null>(null);
@@ -93,6 +99,11 @@ export function ProjectBoard() {
   const [promptDraft, setPromptDraft] = useState("");
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [continuityReportOpen, setContinuityReportOpen] = useState(false);
+  const [exportClipIds, setExportClipIds] = useState<number[]>([]);
+  const [draggedClipId, setDraggedClipId] = useState<number | null>(null);
+  const [dropTargetClipId, setDropTargetClipId] = useState<number | null>(null);
+  const exportSelectionProjectRef = useRef<number | null>(null);
+  const knownClipIdsRef = useRef<Set<number>>(new Set());
   const [refineAllProgress, setRefineAllProgress] = useState<{ done: number; total: number; failed: number } | null>(
     null,
   );
@@ -109,7 +120,29 @@ export function ProjectBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.data?.id, project.data?.overarching_prompt]);
 
-  if (Number.isNaN(projectId)) return <p className="error">Invalid project.</p>;
+  const clipIdsKey = project.data?.clips.map((clip) => clip.id).join(",") ?? "";
+  useEffect(() => {
+    if (!project.data) return;
+    const currentIds = project.data.clips.map((clip) => clip.id);
+    if (exportSelectionProjectRef.current !== project.data.id) {
+      exportSelectionProjectRef.current = project.data.id;
+      knownClipIdsRef.current = new Set(currentIds);
+      setExportClipIds(currentIds);
+      return;
+    }
+    const currentSet = new Set(currentIds);
+    const newlyAdded = currentIds.filter((id) => !knownClipIdsRef.current.has(id));
+    knownClipIdsRef.current = currentSet;
+    setExportClipIds((selected) => [
+      ...selected.filter((id) => currentSet.has(id)),
+      ...newlyAdded,
+    ]);
+    // clipIdsKey deliberately captures membership changes without reacting
+    // to every polling response's fresh clips array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.data?.id, clipIdsKey]);
+
+  if (Number.isNaN(projectId)) return <p className="error">{t("director.invalidProject", "Invalid project.")}</p>;
 
   async function handleAddClip(mode: NewClipMode) {
     const proj = project.data;
@@ -151,6 +184,10 @@ export function ProjectBoard() {
     await updateProject.mutateAsync({ projectId, useTurbo });
   }
 
+  async function handleModelVariantChange(modelVariant: ModelVariant) {
+    await updateProject.mutateAsync({ projectId, modelVariant });
+  }
+
   function handleTitleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") e.currentTarget.blur();
     if (e.key === "Escape") setEditingTitle(false);
@@ -159,6 +196,34 @@ export function ProjectBoard() {
   async function handleCheckContinuity() {
     setContinuityReportOpen(true);
     await checkContinuity.mutateAsync(projectId);
+  }
+
+  function toggleExportClip(clipId: number) {
+    setExportClipIds((selected) =>
+      selected.includes(clipId) ? selected.filter((id) => id !== clipId) : [...selected, clipId],
+    );
+  }
+
+  function handleClipDragStart(event: DragEvent<HTMLSpanElement>, clipId: number) {
+    setDraggedClipId(clipId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(clipId));
+  }
+
+  function handleClipDragOver(event: DragEvent<HTMLDivElement>, clipId: number) {
+    if (draggedClipId === null || draggedClipId === clipId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetClipId(clipId);
+  }
+
+  function handleClipDrop(event: DragEvent<HTMLDivElement>, targetClip: Clip) {
+    event.preventDefault();
+    const sourceId = draggedClipId ?? Number(event.dataTransfer.getData("text/plain"));
+    setDraggedClipId(null);
+    setDropTargetClipId(null);
+    if (!Number.isInteger(sourceId) || sourceId === targetClip.id) return;
+    reorderClip.mutate({ projectId, clipId: sourceId, order: targetClip.order });
   }
 
   // Re-runs AI refine for every clip that already has an AI-refined
@@ -204,7 +269,22 @@ export function ProjectBoard() {
     project.data?.clips.filter((c) => c.current_job_status === "queued" || c.current_job_status === "processing")
       .length ?? 0;
   const selectedClip = project.data?.clips.find((c) => c.id === selectedClipId) ?? null;
-  const canAssemble = !!project.data?.clips.length && project.data.clips.every((c) => c.video_url && !c.needs_render);
+  const qualityPresets = mergeDirectorQualityPresets({
+    t2v: presetsByMode.t2v.data,
+    i2v: presetsByMode.i2v.data,
+    r2v: presetsByMode.r2v.data,
+  });
+  const availableModelVariants = availableDirectorModelVariants(
+    config.data?.available_model_keys ?? [],
+    (project.data?.clips.map((clip) => clip.mode).filter((mode) =>
+      mode === "t2v" || mode === "i2v" || mode === "r2v",
+    ) ?? []) as ("t2v" | "i2v" | "r2v")[],
+  );
+  const modelVariants = availableModelVariants.includes(projectModelVariant)
+    ? availableModelVariants
+    : [projectModelVariant, ...availableModelVariants];
+  const selectedExportClips = project.data?.clips.filter((clip) => exportClipIds.includes(clip.id)) ?? [];
+  const canAssemble = selectedExportClips.length > 0 && selectedExportClips.every((c) => c.video_url && !c.needs_render);
   // Only r2v clips can actually wire a shared resource into a render (see
   // backend director/services.py's project_requires_reference_mode()) --
   // once the project has any, every clip must be one.
@@ -220,11 +300,11 @@ export function ProjectBoard() {
   return (
     <section className="director-board">
       <button type="button" className="link-button director-back-link" onClick={() => navigate("/director")}>
-        ← All projects
+        ← {t("director.allProjects", "All projects")}
       </button>
 
-      {project.isLoading && <p className="hint">Loading…</p>}
-      {project.isError && <p className="error">Couldn't load this project.</p>}
+      {project.isLoading && <p className="hint">{t("common.loading", "Loading…")}</p>}
+      {project.isError && <p className="error">{t("director.projectLoadError", "Couldn't load this project.")}</p>}
 
       {project.data && (
         <>
@@ -246,37 +326,34 @@ export function ProjectBoard() {
                 setTitleDraft(project.data.title);
                 setEditingTitle(true);
               }}
-              title="Click to rename"
+              title={t("director.clickRename", "Click to rename")}
             >
-              {project.data.title || `Project ${project.data.id}`}
+              {project.data.title || `${t("director.untitled", "Untitled project")} #${project.data.id}`}
             </h1>
           )}
 
           <fieldset className="prompt-fieldset">
-            <legend>Overarching prompt</legend>
+            <legend>{t("director.overarchingPrompt", "Overarching prompt")}</legend>
             <p className="hint">
-              Shared world/setting/character context — given to every clip's render, and marks
-              every clip dirty when changed.
+              {t("director.overarchingHint", "Shared world, setting and character context used by every generated clip; changing it marks clips for re-render.")}
             </p>
             <textarea
               rows={3}
               value={promptDraft}
               onChange={(e) => setPromptDraft(e.target.value)}
               onBlur={() => void savePrompt()}
-              placeholder="e.g. A cyberpunk city at night, neon-lit rain-slicked streets…"
+              placeholder={t("director.overarchingPlaceholder", "e.g. A cyberpunk city at night, neon-lit rain-slicked streets…")}
             />
           </fieldset>
 
           <fieldset className="prompt-fieldset">
-            <legend>Aspect ratio &amp; quality</legend>
+            <legend>{t("director.aspectQuality", "Aspect ratio & quality")}</legend>
             <p className="hint">
-              Shared by every clip in the project (not chosen per-clip) — MiniMax H3's continuity
-              model needs consistent resolution across a chain. Changing either marks every clip
-              dirty.
+              {t("director.aspectQualityHint", "Shared by every generated clip. Changing either setting requires re-render because continuity uses a consistent canvas.")}
             </p>
             <div className="toolbar">
               <label className="toolbar-control">
-                <span>Aspect ratio</span>
+                <span>{t("generate.aspect", "Aspect ratio")}</span>
                 <select value={project.data.aspect_ratio} onChange={(e) => void handleAspectRatioChange(e.target.value)}>
                   {config.data?.aspect_ratios.map((ratio) => (
                     <option key={ratio.value} value={ratio.value}>
@@ -289,11 +366,29 @@ export function ProjectBoard() {
                 </select>
               </label>
               <label className="toolbar-control">
-                <span>Quality</span>
+                <span>{t("generate.quality", "Quality")}</span>
                 <select value={project.data.quality_label} onChange={(e) => void handleQualityChange(e.target.value)}>
-                  {presetsByMode.t2v.data?.map((preset) => (
+                  {qualityPresets.map((preset) => (
                     <option key={preset.label} value={preset.label}>
                       {preset.label} ({preset.megapixels}MP{preset.is_draft ? ", draft" : ""})
+                    </option>
+                  ))}
+                  {!qualityPresets.some((preset) => preset.label === project.data.quality_label) && (
+                    <option value={project.data.quality_label}>{project.data.quality_label}</option>
+                  )}
+                </select>
+              </label>
+              <label className="toolbar-control">
+                <span>{t("generate.model", "Model")}</span>
+                <select
+                  value={project.data.model_variant}
+                  onChange={(e) => void handleModelVariantChange(e.target.value as ModelVariant)}
+                >
+                  {modelVariants.map((variant) => (
+                    <option key={variant} value={variant}>
+                      {variant === "fp8"
+                        ? t("generate.modelFp8", "FP8 (faster / lower VRAM)")
+                        : t("generate.modelInt8", "INT8 (alternate quantization)")}
                     </option>
                   ))}
                 </select>
@@ -331,7 +426,7 @@ export function ProjectBoard() {
                   : undefined
               }
             >
-              Generate from script…
+              {t("director.generateFromScript", "Generate from script…")}
             </button>
             {config.data?.llm_enabled && (
               <button
@@ -339,7 +434,9 @@ export function ProjectBoard() {
                 onClick={() => void handleCheckContinuity()}
                 disabled={checkContinuity.isPending || project.data.clips.length === 0}
               >
-                {checkContinuity.isPending ? "Checking…" : "Check continuity"}
+                {checkContinuity.isPending
+                  ? t("director.checking", "Checking…")
+                  : t("director.checkContinuity", "Check continuity")}
               </button>
             )}
             {config.data?.llm_enabled && refinableCount > 0 && (
@@ -360,7 +457,9 @@ export function ProjectBoard() {
               onClick={() => renderAllDirty.mutate(projectId)}
               disabled={renderAllDirty.isPending || dirtyCount === 0}
             >
-              {renderAllDirty.isPending ? "Starting…" : `Render all dirty (${dirtyCount})`}
+              {renderAllDirty.isPending
+                ? t("director.starting", "Starting…")
+                : t("director.renderDirty", "Render all dirty ({count})", { count: dirtyCount })}
             </button>
             {activeCount > 0 && (
               <button
@@ -370,24 +469,28 @@ export function ProjectBoard() {
                 disabled={cancelAllRenders.isPending}
               >
                 <span aria-hidden="true">⏹</span>{" "}
-                {cancelAllRenders.isPending ? "Cancelling…" : `Cancel all (${activeCount})`}
+                {cancelAllRenders.isPending
+                  ? t("director.cancelling", "Cancelling…")
+                  : t("director.cancelAll", "Cancel all ({count})", { count: activeCount })}
               </button>
             )}
             <button
               type="button"
-              onClick={() => assembleProject.mutate(projectId)}
+              onClick={() => assembleProject.mutate({ projectId, clipIds: exportClipIds })}
               disabled={assembleProject.isPending || !canAssemble}
-              title={canAssemble ? undefined : "Every clip must be rendered and up to date first."}
+              title={canAssemble ? undefined : t("director.exportUnavailable", "Select at least one rendered, up-to-date clip.")}
             >
-              {assembleProject.isPending ? "Assembling…" : "Export"}
+              {assembleProject.isPending
+                ? t("director.assembling", "Assembling…")
+                : t("director.exportSelected", "Export selected ({count})", { count: exportClipIds.length })}
             </button>
             {project.data.assembled_video_url && (
               <a href={project.data.assembled_video_url} download className="button">
-                <span aria-hidden="true">⬇</span> Download export
+                <span aria-hidden="true">⬇</span> {t("director.downloadExport", "Download export")}
               </a>
             )}
           </div>
-          {assembleProject.isError && <p className="error">Couldn't assemble the export. Try again.</p>}
+          {assembleProject.isError && <p className="error">{t("director.exportError", "Couldn't assemble the export. Try again.")}</p>}
           {refineAllProgress && refineAllProgress.done === refineAllProgress.total && (
             <p className={refineAllProgress.failed ? "error" : "hint"}>
               Re-refined {refineAllProgress.total - refineAllProgress.failed}/{refineAllProgress.total} clip
@@ -396,7 +499,23 @@ export function ProjectBoard() {
             </p>
           )}
 
-          <div className="director-timeline">
+          <div className="director-export-selection">
+            <strong>{t("director.exportSelection", "Export selection: {selected}/{total}", {
+              selected: exportClipIds.length,
+              total: project.data.clips.length,
+            })}</strong>
+            <span className="hint">{t("director.exportOrderHint", "Export follows the timeline order. Drag the ⠿ handle to reorder.")}</span>
+            <button type="button" className="link-button" onClick={() => setExportClipIds(project.data.clips.map((clip) => clip.id))}>
+              {t("director.selectAll", "Select all")}
+            </button>
+            <button type="button" className="link-button" onClick={() => setExportClipIds([])}>
+              {t("common.clear", "Clear")}
+            </button>
+          </div>
+
+          <div className="director-timeline" onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTargetClipId(null);
+          }}>
             {project.data.clips.map((clip, index) => (
               <ClipBox
                 key={clip.id}
@@ -406,25 +525,35 @@ export function ProjectBoard() {
                 onOpen={() => setSelectedClipId(clip.id)}
                 onMoveUp={() => reorderClip.mutate({ projectId, clipId: clip.id, order: clip.order - 1 })}
                 onMoveDown={() => reorderClip.mutate({ projectId, clipId: clip.id, order: clip.order + 1 })}
+                selectedForExport={exportClipIds.includes(clip.id)}
+                isDragging={draggedClipId === clip.id}
+                isDropTarget={dropTargetClipId === clip.id}
+                onToggleExport={() => toggleExportClip(clip.id)}
+                onDragStart={(event) => handleClipDragStart(event, clip.id)}
+                onDragOver={(event) => handleClipDragOver(event, clip.id)}
+                onDrop={(event) => handleClipDrop(event, clip)}
+                onDragEnd={() => {
+                  setDraggedClipId(null);
+                  setDropTargetClipId(null);
+                }}
               />
             ))}
 
             <div className="director-add-clip">
               {visibleClipModes.map(({ mode, label }) => (
                 <button type="button" key={mode} onClick={() => void handleAddClip(mode)} disabled={createClip.isPending}>
-                  {label}
+                  {t(`director.add.${mode}`, label)}
                 </button>
               ))}
             </div>
           </div>
           {hasResources && (
             <p className="hint">
-              This project has shared references — every clip must be a reference clip while
-              they're attached.
+              {t("director.sharedReferencesMode", "This project has shared references, so every generated clip must use reference mode while they are attached.")}
             </p>
           )}
           {project.data.clips.length === 0 && (
-            <p className="empty-state">No clips yet — add one above to start the sequence.</p>
+            <p className="empty-state">{t("director.noClips", "No clips yet — add one above to start the sequence.")}</p>
           )}
         </>
       )}
@@ -465,13 +594,13 @@ export function ProjectBoard() {
               type="button"
               className="modal-close"
               onClick={() => setContinuityReportOpen(false)}
-              aria-label="Close"
+              aria-label={t("common.close", "Close")}
             >
               <CloseIcon size={16} />
             </button>
-            <h2>Continuity check</h2>
-            {checkContinuity.isPending && <p className="hint">Reviewing every clip's prompt…</p>}
-            {checkContinuity.isError && <p className="error">Couldn't run the continuity check. Try again.</p>}
+            <h2>{t("director.checkContinuity", "Continuity check")}</h2>
+            {checkContinuity.isPending && <p className="hint">{t("director.reviewingPrompts", "Reviewing every clip's prompt…")}</p>}
+            {checkContinuity.isError && <p className="error">{t("director.continuityError", "Couldn't run the continuity check. Try again.")}</p>}
             {checkContinuity.data && <p className="continuity-report">{checkContinuity.data.report}</p>}
           </div>
         </div>

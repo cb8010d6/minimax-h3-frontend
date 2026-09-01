@@ -584,6 +584,88 @@ select {
   width: 100%;
 }
 
+.language-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.language-toggle select {
+  min-width: 5.6rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.login-card > .language-toggle {
+  float: right;
+  margin: -0.25rem -0.25rem 0.75rem 1rem;
+}
+
+.resolution-preview {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 12rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+
+.resolution-preview strong {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.resolution-note {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.gpu-pool {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.gpu-pool-header,
+.gpu-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gpu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.gpu-card {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-left: 4px solid #6b7280;
+  border-radius: 8px;
+}
+
+.gpu-card.state-free,
+.gpu-card.state-standby,
+.gpu-card.state-ready { border-left-color: #16a34a; }
+.gpu-card.state-busy,
+.gpu-card.state-starting { border-left-color: #2563eb; }
+.gpu-card.state-external { border-left-color: #f59e0b; }
+.gpu-card.state-error,
+.gpu-card.state-offline { border-left-color: #dc2626; }
+.gpu-state { font-size: 12px; text-transform: uppercase; }
+.gpu-card small { color: var(--text-muted); }
+.gpu-card button { padding: 5px 8px; }
+
 /* Prompt is the primary control -- larger, autofocused, the most visually
    prominent fieldset on the screen: an accent-tinted border + a faint lift
    instead of the previous blunt 2px-border trick. */
@@ -1298,6 +1380,53 @@ select {
   margin: 0 0 6px;
 }
 
+.queue-entry-selected .queue-entry-button {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.queue-entry-selection {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transform: translateY(-50%);
+}
+
+.queue-entry-selection input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.queue-entry-selection-order {
+  min-width: 18px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.queue-entry-selection + .queue-entry-button {
+  padding-left: 38px;
+}
+
+.queue-entry-quick-actions {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  z-index: 1;
+  display: flex;
+  gap: 3px;
+}
+
 .folder-picker-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1395,6 +1524,30 @@ select {
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: var(--shadow);
+}
+
+.queue-select-videos-toggle {
+  margin-left: auto;
+}
+
+.queue-video-selection-toolbar {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-bg);
+}
+
+.queue-video-selection-toolbar p {
+  margin: 0;
+}
+
+.queue-video-selection-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
 }
 
 .queue-entry-button {
@@ -2351,6 +2504,23 @@ input.catalog-label-input {
   margin: 4px 0 20px;
 }
 
+.director-export-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 6px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft, var(--code-bg));
+}
+
+.director-export-selection .hint {
+  flex: 1 1 280px;
+  margin: 0;
+}
+
 /* Shared project resources (character sheets/voice/world refs) */
 
 .director-resources-panel .hint {
@@ -2400,6 +2570,14 @@ input.catalog-label-input {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+}
+
+.clip-box-wrap-dragging {
+  opacity: 0.45;
+}
+
+.clip-box-wrap-drop-target .clip-box {
+  box-shadow: -5px 0 0 var(--accent);
 }
 
 /* A short connector line between a continues_previous box and the one
@@ -2479,9 +2657,36 @@ input.catalog-label-input {
   font-weight: 600;
 }
 
+.clip-export-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.clip-export-select input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .clip-box-move-buttons {
   display: flex;
   gap: 2px;
+}
+
+.clip-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+
+.clip-drag-handle:active {
+  cursor: grabbing;
 }
 
 .clip-box-move-buttons button {

@@ -14,7 +14,7 @@ import type {
   ProjectResource,
   ReferenceCandidate,
 } from "./directorTypes";
-import type { Mode, ReferenceKind } from "./types";
+import type { Mode, ModelVariant, ReferenceKind } from "./types";
 
 const ACTIVE_JOB_STATUSES = new Set(["queued", "processing"]);
 
@@ -71,10 +71,43 @@ export function useCreateProjectFromJob() {
   });
 }
 
+
+export function useCreateProjectFromJobs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobIds, title }: { jobIds: number[]; title?: string }) =>
+      apiFetch<ProjectDetail>("/director/from_jobs/", {
+        method: "POST",
+        body: JSON.stringify({ job_ids: jobIds, title }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["director-projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["director-job-memberships"] });
+    },
+  });
+}
+
+
+export function useImportJobsToProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, jobIds }: { projectId: number; jobIds: number[] }) =>
+      apiFetch<Clip[]>(`/director/projects/${projectId}/import_jobs/`, {
+        method: "POST",
+        body: JSON.stringify({ job_ids: jobIds }),
+      }),
+    onSuccess: (_data, { projectId }) => {
+      void queryClient.invalidateQueries({ queryKey: ["director-project", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["director-projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["director-job-memberships"] });
+    },
+  });
+}
+
 export function useCreateDirectorProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title?: string; overarchingPrompt?: string; aspectRatio?: string; qualityLabel?: string }) =>
+    mutationFn: (input: { title?: string; overarchingPrompt?: string; aspectRatio?: string; qualityLabel?: string; modelVariant?: ModelVariant }) =>
       apiFetch<ProjectDetail>("/director/projects/", {
         method: "POST",
         body: JSON.stringify({
@@ -82,6 +115,7 @@ export function useCreateDirectorProject() {
           overarching_prompt: input.overarchingPrompt,
           aspect_ratio: input.aspectRatio,
           quality_label: input.qualityLabel,
+          model_variant: input.modelVariant,
         }),
       }),
     onSuccess: () => {
@@ -100,6 +134,7 @@ export function useUpdateDirectorProject() {
       aspectRatio,
       qualityLabel,
       useTurbo,
+      modelVariant,
       scriptText,
     }: {
       projectId: number;
@@ -112,6 +147,7 @@ export function useUpdateDirectorProject() {
       // Project-wide, like qualityLabel -- marks every clip dirty but
       // doesn't recompute width/height (turbo doesn't change resolution).
       useTurbo?: boolean;
+      modelVariant?: ModelVariant;
       // Purely informational -- doesn't affect any clip.
       scriptText?: string;
     }) =>
@@ -123,6 +159,7 @@ export function useUpdateDirectorProject() {
           aspect_ratio: aspectRatio,
           quality_label: qualityLabel,
           use_turbo: useTurbo,
+          model_variant: modelVariant,
           script_text: scriptText,
         }),
       }),
@@ -475,9 +512,12 @@ export function useApplyPlan() {
 export function useAssembleProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (projectId: number) =>
-      apiFetch<ProjectDetail>(`/director/projects/${projectId}/assemble/`, { method: "POST" }),
-    onSuccess: (_data, projectId) => {
+    mutationFn: ({ projectId, clipIds }: { projectId: number; clipIds: number[] }) =>
+      apiFetch<ProjectDetail>(`/director/projects/${projectId}/assemble/`, {
+        method: "POST",
+        body: JSON.stringify({ clip_ids: clipIds }),
+      }),
+    onSuccess: (_data, { projectId }) => {
       void queryClient.invalidateQueries({ queryKey: ["director-project", projectId] });
     },
   });
